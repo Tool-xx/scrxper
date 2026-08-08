@@ -1,0 +1,2701 @@
+// ScrXper — content script (x.com).
+// 1) Встраивает панель управления в страницу X (закреплённое меню).
+// 2) В отдельной «скрейперской» вкладке автоматически:
+//    - собирает ВЕРИФИЦИРОВАННЫХ пользователей из following и followers,
+//    - шлёт единый красивый HTML-отчёт в Telegram,
+//    - закрывает вкладку.
+
+(() => {
+  'use strict';
+  if (window.__xenv) return;
+  window.__xenv = true;
+
+  const VERSION = '1.8.1';
+  const STAGE_TIMEOUT_MS = 25 * 60 * 1000;   // лимит на один список (с человеческим темпом)
+  const BASE_TIMEOUT_MS = 30 * 60 * 1000;    // базовый лимит задачи
+  const ENRICH_PER_USER_MS = 40 * 1000;      // бюджет на одного пользователя в enrich
+  const MAX_TIMEOUT_MS = 6 * 60 * 60 * 1000; // абсолютный предел задачи
+  const MAX_CONSECUTIVE_FAILS = 5;           // столько rate-limit-ошибок подряд — и задача стоп
+
+  /* === TAS (TopAutoScraper): сбор ссылок → Grok → канал === */
+  const TAS_TIMEOUT_MS = 100 * 60 * 1000;    // базовый лимит TAS-прогона
+  const GROK_TIMEOUT_MS = 15 * 60 * 1000;    // сколько ждать ответ Grok
+  const GROK_MAX_LINKS_CHARS = 90000;        // потолок размера списка ссылок в промте
+  const GROK_TEXTAREA_SEL = 'textarea[placeholder="Ask anything"]';
+  const GROK_SEND_SEL = 'button[aria-label="Grok something"]';
+  const GROK_COPY_SEL = 'button[aria-label="Copy text"]';
+  const TAS_LINKS_PLACEHOLDER = '[ВСТАВЬ СЮДА СПИСОК ССЫЛОК НА X]';
+
+  /* === Стикер после TAS === */
+  const STICKER_PACK = 'CrazyEvilBro';            // t.me/addstickers/CrazyEvilBro
+
+  // Текст, который кладётся в Grok. Строка-плейсхолдер в самом конце заменяется
+  // на реальный список ссылок (через запятую) перед отправкой.
+  const TAS_PROMPT = `
+# X / TWITTER OSINT — DEEP PROFILE & CANDIDATE FILTER
+
+You are an advanced OSINT researcher, social-media intelligence analyst, and crypto/technology investigator specializing in X (Twitter), cryptocurrency, startups, investing, technology, online communities, and public-source research.
+
+I will provide you with a large list of X/Twitter accounts at the end of this prompt.
+
+Your task is to analyze the ENTIRE list, filter the accounts, identify the strongest candidates, and then create detailed public-source intelligence profiles for the selected people.
+
+The goal is NOT to simply find the most popular accounts.
+
+The goal is to find the most interesting "hidden gems": people who are relatively under-the-radar but appear to have money, expertise, interesting careers, strong networks, real crypto/business involvement, interesting lifestyles, unusual backgrounds, and/or highly engaging personalities.
+
+━━━━━━━━━━━━━━━━━━
+CORE OBJECTIVE
+━━━━━━━━━━━━━━━━━━
+
+Analyze every account from the provided list before making the final selection.
+
+Then identify the strongest candidates according to the criteria below.
+
+The ideal candidate combines several of these characteristics:
+
+* relatively low or moderate popularity;
+* credible signs of financial success;
+* meaningful involvement in crypto, startups, technology, investing, or business;
+* interesting career;
+* unusual or impressive background;
+* high-quality original content;
+* active communication with other people;
+* socially active lifestyle;
+* interesting hobbies and interests;
+* access to interesting professional or social circles;
+* strong network;
+* current activity;
+* low signal-to-noise ratio;
+* enough public information to construct a meaningful profile.
+
+Do NOT simply select people with the largest follower counts.
+
+A person with 15,000 followers and a fascinating career, substantial crypto involvement, strong network, and real-world achievements may be significantly more valuable than a person with 500,000 followers who only posts generic crypto content.
+
+━━━━━━━━━━━━━━━━━━
+IMPORTANT RESEARCH RULES
+━━━━━━━━━━━━━━━━━━
+
+Use ONLY publicly available information.
+
+You may analyze:
+
+* public X profiles;
+* public X posts;
+* public X replies;
+* public X reposts;
+* public websites;
+* company websites;
+* public interviews;
+* podcasts;
+* public videos;
+* conference appearances;
+* public GitHub profiles;
+* public professional profiles;
+* public blockchain information;
+* public crypto addresses when attribution is clearly supported;
+* reputable media;
+* public databases;
+* other legitimate publicly accessible sources.
+
+DO NOT attempt to obtain:
+
+* private messages;
+* passwords;
+* private accounts;
+* private contact information;
+* home addresses;
+* private financial records;
+* leaked credentials;
+* non-public personal data.
+
+Do not attempt to deanonymize a person beyond what can reasonably be established from legitimate public sources.
+
+━━━━━━━━━━━━━━━━━━
+ANTI-HALLUCINATION RULE
+━━━━━━━━━━━━━━━━━━
+
+This is one of the most important rules.
+
+NEVER invent information.
+
+NEVER turn an assumption into a fact.
+
+NEVER fabricate:
+
+* net worth;
+* income;
+* age;
+* education;
+* employment;
+* company ownership;
+* investments;
+* wallet ownership;
+* relationships;
+* biography;
+* achievements;
+* professional connections.
+
+If something cannot be established, say:
+
+"Не удалось установить по публичным источникам."
+
+Use the following evidence classifications:
+
+[ПОДТВЕРЖДЕНО]
+The information is directly supported by a reliable public source.
+
+[СИЛЬНЫЙ ПРИЗНАК]
+There are multiple credible indicators, but the information cannot be considered fully confirmed.
+
+[НЕПОДТВЕРЖДЕНО]
+There is some indication, but insufficient evidence.
+
+[НЕИЗВЕСТНО]
+There is not enough public information.
+
+For important claims, prefer primary sources over secondary sources.
+
+━━━━━━━━━━━━━━━━━━
+CRITERION 1 — POPULARITY
+━━━━━━━━━━━━━━━━━━
+
+Do NOT automatically reward popularity.
+
+In fact, moderately sized accounts should generally receive additional consideration.
+
+Look for people who are:
+
+* relatively unknown outside their niche;
+* influential inside a specific community;
+* connected to interesting people;
+* experienced but not celebrity-level;
+* wealthy or successful without being massive influencers;
+* active operators rather than content creators.
+
+Consider follower count together with:
+
+* engagement quality;
+* quality of followers;
+* professional reputation;
+* network;
+* niche influence;
+* originality.
+
+A huge follower count is NOT automatically a positive signal.
+
+━━━━━━━━━━━━━━━━━━
+CRITERION 2 — FINANCIAL SUCCESS
+━━━━━━━━━━━━━━━━━━
+
+Determine whether there are credible public indications that the person is financially successful.
+
+Focus especially on:
+
+* cryptocurrency;
+* startups;
+* entrepreneurship;
+* investing;
+* venture capital;
+* trading;
+* technology;
+* business ownership;
+* company exits;
+* token launches;
+* DeFi;
+* NFT projects;
+* consulting;
+* software;
+* high-level employment.
+
+Look for evidence such as:
+
+* founded/co-founded successful companies;
+* meaningful ownership in businesses;
+* startup exits;
+* fundraising;
+* investment activity;
+* venture capital activity;
+* public investments;
+* successful crypto projects;
+* early participation in valuable projects;
+* public blockchain activity;
+* public wallets clearly attributable to the person;
+* publicly documented transactions;
+* high-level positions at valuable companies;
+* business partnerships;
+* publicly discussed financial achievements.
+
+IMPORTANT:
+
+Do NOT conclude someone is wealthy simply because they:
+
+* post luxury cars;
+* wear expensive watches;
+* travel frequently;
+* stay in expensive hotels;
+* show designer clothing;
+* attend expensive events;
+* post screenshots of large numbers;
+* use a luxury-looking profile picture.
+
+Lifestyle is only a secondary signal.
+
+Financial conclusions must be based primarily on business, professional, investment, or blockchain evidence.
+
+NEVER provide a precise net worth unless the person has publicly disclosed it and the source is reliable.
+
+Classify financial strength as:
+
+Финансовая состоятельность:
+
+* Высокая
+* Средняя
+* Низкая
+* Неизвестно
+
+Also explain WHY you gave that classification.
+
+━━━━━━━━━━━━━━━━━━
+CRITERION 3 — CRYPTO INVOLVEMENT
+━━━━━━━━━━━━━━━━━━
+
+Investigate the person's relationship with crypto.
+
+Look for:
+
+* founders;
+* developers;
+* traders;
+* investors;
+* VCs;
+* researchers;
+* KOLs;
+* project operators;
+* token founders;
+* protocol contributors;
+* NFT founders;
+* DeFi participants;
+* crypto analysts;
+* blockchain developers;
+* ecosystem contributors.
+
+Determine whether the person is:
+
+* deeply involved;
+* professionally involved;
+* an investor;
+* a trader;
+* an observer;
+* primarily a content creator;
+* only casually interested.
+
+Do not treat "crypto" in someone's bio as proof of meaningful involvement.
+
+━━━━━━━━━━━━━━━━━━
+CRITERION 4 — CAREER QUALITY
+━━━━━━━━━━━━━━━━━━
+
+Determine what the person ACTUALLY does.
+
+Investigate:
+
+* current occupation;
+* current company;
+* current position;
+* previous positions;
+* companies founded;
+* companies co-founded;
+* projects;
+* businesses;
+* technical expertise;
+* entrepreneurial activity;
+* investment activity;
+* notable professional achievements.
+
+Do not simply copy the person's X bio.
+
+Verify whether their claims are supported by their public activity.
+
+━━━━━━━━━━━━━━━━━━
+CRITERION 5 — PERSONALITY
+━━━━━━━━━━━━━━━━━━
+
+Analyze the person's observable public communication style.
+
+Look for:
+
+* humor;
+* originality;
+* storytelling;
+* interesting opinions;
+* unusual experiences;
+* intellectual curiosity;
+* spontaneity;
+* confidence;
+* willingness to discuss ideas;
+* willingness to communicate with others;
+* authenticity;
+* personality.
+
+Do NOT make psychological diagnoses.
+
+Do NOT claim to know someone's true personality.
+
+Instead describe observable behavior.
+
+For example:
+
+"По публичной активности выглядит достаточно общительным: регулярно отвечает другим пользователям, участвует в дискуссиях и публикует личные наблюдения."
+
+This is acceptable.
+
+"This person is definitely extroverted" is NOT acceptable.
+
+━━━━━━━━━━━━━━━━━━
+CRITERION 6 — SOCIAL ACTIVITY
+━━━━━━━━━━━━━━━━━━
+
+Look for signs that the person is socially active.
+
+Examples:
+
+* frequent replies;
+* conversations;
+* Twitter/X Spaces;
+* podcasts;
+* conferences;
+* meetups;
+* networking;
+* collaborations;
+* public events;
+* frequent interaction with founders/investors;
+* travel connected with professional communities;
+* IRL events.
+
+People who actively communicate with others should generally score higher than accounts that only broadcast content.
+
+━━━━━━━━━━━━━━━━━━
+CRITERION 7 — NETWORK / ACCESS
+━━━━━━━━━━━━━━━━━━
+
+Identify publicly visible professional and community connections.
+
+Look for connections to:
+
+* founders;
+* investors;
+* VCs;
+* developers;
+* major crypto projects;
+* startups;
+* technology companies;
+* researchers;
+* conferences;
+* influential communities;
+* interesting operators.
+
+Do NOT claim a private friendship unless publicly established.
+
+Describe only observable professional or community connections.
+
+━━━━━━━━━━━━━━━━━━
+CRITERION 8 — UNIQUENESS
+━━━━━━━━━━━━━━━━━━
+
+Give additional weight to unusual people.
+
+Examples:
+
+* unusual career trajectory;
+* transitioned between industries;
+* built something significant;
+* early involvement in an important project;
+* unusual technical expertise;
+* interesting entrepreneurial history;
+* unusual hobbies;
+* interesting lifestyle;
+* unusual geographic background;
+* unusual network;
+* unique expertise;
+* interesting personal story.
+
+━━━━━━━━━━━━━━━━━━
+CRITERION 9 — INFORMATION DENSITY
+━━━━━━━━━━━━━━━━━━
+
+Prefer people who have enough public information to create a meaningful profile.
+
+High information density:
+
+* detailed X activity;
+* interviews;
+* podcasts;
+* websites;
+* company pages;
+* GitHub;
+* public projects;
+* public professional history;
+* public blockchain activity.
+
+Low information density:
+
+* empty profile;
+* generic bio;
+* mostly reposts;
+* no identifiable work;
+* no meaningful public history.
+
+However, do NOT invent information simply to make a profile longer.
+
+━━━━━━━━━━━━━━━━━━
+CRITERION 10 — CURRENT ACTIVITY
+━━━━━━━━━━━━━━━━━━
+
+Prefer people who are currently active.
+
+Check:
+
+* recent posts;
+* recent replies;
+* recent projects;
+* current employment;
+* current crypto involvement;
+* recent appearances;
+* recent business activity.
+
+Do not heavily prioritize someone solely because they were important several years ago.
+
+━━━━━━━━━━━━━━━━━━
+CRITERION 11 — SIGNAL-TO-NOISE
+━━━━━━━━━━━━━━━━━━
+
+Determine whether the account contains genuine signal.
+
+HIGH SIGNAL:
+
+* original ideas;
+* useful information;
+* real projects;
+* real experience;
+* meaningful interactions;
+* credible achievements;
+* insider knowledge;
+* interesting observations.
+
+LOW SIGNAL:
+
+* generic motivational posts;
+* endless engagement bait;
+* AI-generated spam;
+* repetitive shilling;
+* meaningless reposts;
+* fake flexing;
+* generic "crypto alpha";
+* obvious farming.
+
+━━━━━━━━━━━━━━━━━━
+SCORING SYSTEM
+━━━━━━━━━━━━━━━━━━
+
+Score each candidate internally from 0 to 100.
+
+Use approximately:
+
+Финансовый / бизнес-сигнал — 20%
+Профессиональный уровень — 15%
+Крипто-вовлечённость — 15%
+Интересность контента и личности — 15%
+Социальная активность — 10%
+Сеть и доступ — 10%
+Уникальность — 5%
+Количество доступной информации — 5%
+Текущая активность — 3%
+Соотношение сигнала и шума — 2%
+
+These percentages are guidelines, not rigid mathematical rules.
+
+Use professional judgment.
+
+━━━━━━━━━━━━━━━━━━
+SELECTION RULE
+━━━━━━━━━━━━━━━━━━
+
+Analyze the ENTIRE list first.
+
+Then return ONLY the strongest candidates.
+
+Approximate selection:
+
+If there are fewer than 50 accounts:
+return approximately the top 10–20%.
+
+50–200 accounts:
+return approximately the top 10%.
+
+200–1000 accounts:
+return approximately the top 5–10%.
+
+More than 1000 accounts:
+return approximately the top 5%, unless the quality of the dataset requires a different threshold.
+
+QUALITY IS MORE IMPORTANT THAN QUANTITY.
+
+If only 7 people are genuinely interesting, return 7.
+
+Do NOT artificially fill the list.
+
+━━━━━━━━━━━━━━━━━━
+DEEP PROFILE
+━━━━━━━━━━━━━━━━━━
+
+For every selected person, investigate as deeply as reasonably possible using public sources.
+
+Include:
+
+1. ИМЯ / ПСЕВДОНИМ
+
+Determine the person's publicly used name.
+
+2. ВОЗРАСТ
+
+Only if publicly available or reasonably verifiable.
+
+Never guess.
+
+3. ПРОФЕССИЯ
+
+Determine their actual occupation.
+
+4. ТЕКУЩАЯ ДЕЯТЕЛЬНОСТЬ
+
+Explain what they are currently doing.
+
+5. КОМПАНИИ / ПРОЕКТЫ
+
+List relevant companies, startups, products, protocols, projects, or businesses.
+
+6. КРИПТО-ДЕЯТЕЛЬНОСТЬ
+
+Explain exactly how they participate in crypto.
+
+7. ФИНАНСОВЫЙ ПРОФИЛЬ
+
+Explain:
+
+* how they appear to make money;
+* where their financial success may come from;
+* business ownership;
+* investments;
+* crypto;
+* startups;
+* trading;
+* employment;
+* other relevant sources.
+
+Separate confirmed facts from indications.
+
+8. БИОГРАФИЯ
+
+Construct the most complete biography possible from public information.
+
+Include, when available:
+
+* education;
+* early career;
+* previous jobs;
+* companies;
+* projects;
+* major career transitions;
+* important achievements;
+* crypto history;
+* notable public milestones.
+
+9. ИНТЕРЕСЫ
+
+Identify recurring interests from their public activity.
+
+Examples:
+
+* AI;
+* crypto;
+* technology;
+* gaming;
+* sports;
+* cars;
+* fashion;
+* travel;
+* music;
+* art;
+* investing;
+* entrepreneurship;
+* nightlife;
+* conferences;
+* other recurring interests.
+
+10. СОЦИАЛЬНОЕ ПОВЕДЕНИЕ
+
+Describe observable public behavior.
+
+Examples:
+
+* активно общается;
+* часто отвечает другим;
+* участвует в дискуссиях;
+* посещает мероприятия;
+* много нетворкает;
+* ведёт себя достаточно открыто;
+* преимущественно публикует профессиональный контент;
+* редко взаимодействует с другими.
+
+11. СЕТЬ / СВЯЗИ
+
+Describe publicly visible professional or community connections.
+
+12. ПОЧЕМУ ВЫБРАН
+
+Explain why this person survived the filtering process.
+
+Focus on the combination of:
+
+* money;
+* career;
+* crypto;
+* personality;
+* social activity;
+* network;
+* uniqueness;
+* information density.
+
+13. СИЛЬНЫЕ СТОРОНЫ
+
+List the strongest signals.
+
+14. СЛАБЫЕ СТОРОНЫ / КРАСНЫЕ ФЛАГИ
+
+Identify:
+
+* inconsistencies;
+* questionable claims;
+* excessive shilling;
+* fake flexing;
+* weak evidence;
+* suspicious business claims;
+* inactivity;
+* excessive popularity;
+* lack of real substance.
+
+Do not make accusations without evidence.
+
+━━━━━━━━━━━━━━━━━━
+EVIDENCE QUALITY
+━━━━━━━━━━━━━━━━━━
+
+For major claims, provide direct sources.
+
+Prioritize:
+
+1. X profile / X posts
+2. official company websites
+3. official project websites
+4. interviews
+5. podcasts
+6. public GitHub
+7. public blockchain explorers
+8. reputable publications
+9. other credible public sources
+
+For every important source, briefly explain what it proves.
+
+Example:
+
+Доказательства:
+
+* https://... — подтверждает должность человека в компании.
+* https://... — подтверждает участие в создании проекта.
+* https://... — интервью, где человек рассказывает о своей карьере.
+
+Do not include irrelevant links just to make the profile look researched.
+
+━━━━━━━━━━━━━━━━━━
+LANGUAGE — STRICT REQUIREMENT
+━━━━━━━━━━━━━━━━━━
+
+THE ENTIRE FINAL ANSWER MUST BE IN RUSSIAN.
+
+This applies to:
+
+* descriptions;
+* analysis;
+* conclusions;
+* field names;
+* classifications;
+* explanations;
+* evaluations;
+* reasons for selection;
+* evidence descriptions.
+
+Do NOT leave English headings or analytical phrases in the final answer.
+
+English is allowed ONLY when it is inherently part of the information, such as:
+
+* person's name;
+* surname;
+* nickname;
+* X username;
+* company name;
+* brand;
+* project name;
+* token name;
+* protocol;
+* technology;
+* product;
+* organization;
+* domain;
+* URL;
+* official job title when useful;
+* technical abbreviations;
+* crypto tickers;
+* direct quotations.
+
+Examples of acceptable English:
+
+OpenAI
+Ethereum
+Solana
+a16z
+Vitalik Buterin
+@username
+CTO
+CEO
+DeFi
+NFT
+BTC
+ETH
+SOL
+
+But ordinary analytical text MUST be Russian.
+
+Correct:
+
+"Основатель стартапа в сфере AI, который ранее работал в OpenAI."
+
+Incorrect:
+
+"Founder of an AI startup who previously worked at OpenAI."
+
+━━━━━━━━━━━━━━━━━━
+RUSSIAN FIELD NAMES
+━━━━━━━━━━━━━━━━━━
+
+Use ONLY these field names:
+
+описание:
+имя / псевдоним:
+возраст:
+профессия:
+текущая деятельность:
+компания / проекты:
+крипто-деятельность:
+финансовый профиль:
+биография:
+интересы:
+социальное поведение:
+сеть / связи:
+почему выбран:
+сильные стороны:
+слабые стороны / красные флаги:
+оценка:
+уровень уверенности:
+доказательства:
+
+Never use:
+
+description:
+name:
+age:
+profession:
+current activity:
+company:
+crypto activity:
+financial profile:
+biography:
+interests:
+social behavior:
+network:
+why selected:
+strengths:
+weaknesses:
+score:
+confidence:
+evidence:
+
+━━━━━━━━━━━━━━━━━━
+CLASSIFICATION LANGUAGE
+━━━━━━━━━━━━━━━━━━
+
+Use Russian classifications:
+
+Высокий
+Средний
+Низкий
+Неизвестно
+
+For confidence:
+
+Высокая
+Средняя
+Низкая
+
+Never use:
+
+HIGH
+MEDIUM
+LOW
+UNKNOWN
+
+━━━━━━━━━━━━━━━━━━
+FINAL OUTPUT FORMAT
+━━━━━━━━━━━━━━━━━━
+
+The final answer MUST contain ONLY the selected profiles.
+
+Do NOT include:
+
+* introduction;
+* methodology;
+* summary;
+* conclusion;
+* table;
+* explanation of the filtering process;
+* additional comments;
+* notes outside the profiles.
+
+Every person MUST be enclosed in their own separate curly-bracket block \`{ }\`.
+
+Use EXACTLY this structure:
+
+{
+https://x.com/USERNAME
+
+описание:
+Имя / псевдоним: ...
+Возраст: ...
+Профессия: ...
+Текущая деятельность: ...
+Компания / проекты: ...
+Крипто-деятельность: ...
+Финансовый профиль: ...
+Биография: ...
+Интересы: ...
+Социальное поведение: ...
+Сеть / связи: ...
+Почему выбран: ...
+Сильные стороны: ...
+Слабые стороны / красные флаги: ...
+Оценка: XX/100
+Уровень уверенности: Высокая / Средняя / Низкая
+
+Доказательства:
+
+* ссылка — что именно подтверждает этот источник;
+* ссылка — что именно подтверждает этот источник;
+* ссылка — что именно подтверждает этот источник;
+  }
+
+Then continue with the next person:
+
+{
+https://x.com/USERNAME
+
+описание:
+...
+}
+
+━━━━━━━━━━━━━━━━━━
+STRICT OUTPUT RULES
+━━━━━━━━━━━━━━━━━━
+
+* Один человек = один отдельный блок \`{...}\`.
+* Никогда не объединяй нескольких людей в один блок.
+* Каждый блок начинается со ссылки на X-профиль.
+* Каждый блок заканчивается \`}\`.
+* Сортируй кандидатов от самого сильного к самому слабому.
+* Самым сильным кандидатам давай наиболее подробные описания.
+* Не трать много текста на слабых кандидатов.
+* Не выбирай человека только из-за количества подписчиков.
+* Не выбирай человека только из-за демонстрации роскошного образа жизни.
+* Не называй человека богатым без достаточных оснований.
+* Не придумывай точный доход или состояние.
+* Не придумывай биографию.
+* Не придумывай связи.
+* Не выдавай предположение за факт.
+* Если информации недостаточно, напиши: "Не удалось установить по публичным источникам."
+* Для важных утверждений указывай доказательства.
+* Все обычные предложения и аналитический текст должны быть на русском языке.
+* Имена, названия компаний, проектов, брендов, токенов, технологий и URL сохраняй в оригинальном написании.
+* Не добавляй никакого текста до первого \`{\`.
+* Не добавляй никакого текста после последнего \`}\`.
+
+━━━━━━━━━━━━━━━━━━
+FINAL SELF-CHECK
+━━━━━━━━━━━━━━━━━━
+
+Before sending the final answer, silently perform the following checks:
+
+1. Я действительно проанализировал весь предоставленный список?
+2. Я выбрал только наиболее сильных кандидатов?
+3. Я не выбрал людей только из-за популярности?
+4. Финансовые выводы основаны на публичных доказательствах?
+5. Я не перепутал демонстративный лайфстайл с реальным богатством?
+6. Я не придумал отсутствующие факты?
+7. Я отделил подтверждённые факты от предположений?
+8. Для важных утверждений есть доказательства?
+9. Все аналитические поля написаны на русском?
+10. Нет случайных английских заголовков?
+11. Каждый человек находится в отдельном \`{...}\` блоке?
+12. Каждый блок содержит ссылку на X?
+13. Кандидаты отсортированы от лучшего к худшему?
+14. Я не добавил вступление или заключение?
+15. Если данных недостаточно, я честно написал об этом?
+
+Only after completing this internal check should you produce the final answer.
+
+━━━━━━━━━━━━━━━━━━
+INPUT
+━━━━━━━━━━━━━━━━━━
+
+Analyze the following X/Twitter accounts:
+
+
+${TAS_LINKS_PLACEHOLDER}`;
+
+  // Перехват скопированного текста: MAIN-мир шлёт CustomEvent 'sxcopy' (см.
+  // main-world.js), плюс пассивный слушатель события copy в этом мире.
+  let lastCopied = '';
+  window.addEventListener('sxcopy', (e) => {
+    if (e && typeof e.detail === 'string' && e.detail) lastCopied = e.detail;
+  });
+  document.addEventListener('copy', (e) => {
+    try {
+      const t = e.clipboardData && e.clipboardData.getData('text/plain');
+      if (t) lastCopied = t;
+    } catch (err) { /* ignore */ }
+  }, true);
+
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const get = (k) => chrome.storage.local.get(k);
+  const set = (obj) => chrome.storage.local.set(obj);
+  const goTo = (path) => { location.replace('https://x.com' + path); };
+
+  // «Человеческая» пауза: случайный диапазон + изредка заметно длиннее (как
+  // будто читаем страницу). Ломает равномерный бот-паттерн таймингов, который
+  // X детектит проще всего. longChance/longMax настраивают «длинную» паузу.
+  function humanPause(minMs, maxMs, longChance = 0.12, longMax = 4000) {
+    const base = minMs + Math.random() * (maxMs - minMs);
+    const long = Math.random() < longChance ? 1200 + Math.random() * (longMax - 1200) : 0;
+    return base + long;
+  }
+
+  /* ================= утилиты ================= */
+
+  function normalizeHandle(raw) {
+    let s = String(raw || '').trim();
+        // Полный URL, «голый» x.com/ник без протокола — всё работает
+    s = s.replace(/^(https?:\/\/)?(www\.)?(x\.com|twitter\.com)\//i, '');
+    s = s.split(/[/?#]/)[0].trim();
+    s = s.replace(/^@/, '');
+    return s;
+  }
+
+  function currentPathHandle() {
+    return (location.pathname.split('/').filter(Boolean)[0] || '').toLowerCase();
+  }
+
+  function currentStage() {
+    const seg = location.pathname.split('/').filter(Boolean);
+    if (seg.length < 2) return '';
+    const s = seg[1].toLowerCase();
+    return s === 'following' || s === 'followers' ? s : '';
+  }
+
+  function fmtDuration(sec) {
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return m > 0 ? `${m} min ${s} s` : `${s} s`;
+  }
+
+  /* ================= telegram (через фон) ================= */
+
+  function tgSend(payload) {
+    return new Promise((resolve) => {
+      try {
+        chrome.runtime.sendMessage({ type: 'TG_SEND', ...payload }, (resp) => {
+          if (chrome.runtime.lastError) resolve({ ok: false, error: chrome.runtime.lastError.message });
+          else resolve(resp || { ok: false, error: 'No response from the background script' });
+        });
+      } catch (e) {
+        resolve({ ok: false, error: String((e && e.message) || e) });
+      }
+    });
+  }
+
+  const sendMessage = (job, text) =>
+    tgSend({ action: 'message', token: job.token, chatId: job.chatId, text });
+
+  const sendDocument = (job, content, filename, caption) =>
+    tgSend({ action: 'document', token: job.token, chatId: job.chatId, content, filename, caption });
+
+  // Логи TAS-прогона идут владельцу (logChatId), а не в канал.
+  const sendLog = (job, text) =>
+    tgSend({ action: 'message', token: job.token, chatId: job.logChatId, text });
+
+  // Единое «уведомить пользователя» для обычного парсера и TAS.
+  const notify = (job, text) =>
+    (job.kind === 'tas' ? sendLog(job, text) : sendMessage(job, text));
+
+  // Отправка отчёта с повторами: сетевые сбои бывают разовыми,
+  // и одна неудачная отправка не должна рушить весь прогон.
+  async function sendDocumentRetry(job, content, filename, caption, tries = 3) {
+    let last = null;
+    for (let i = 0; i < tries; i++) {
+      const r = await sendDocument(job, content, filename, caption);
+      if (r.ok) return r;
+      last = r;
+      if (i < tries - 1) await sleep(2500 * (i + 1));
+    }
+    return { ok: false, error: (last && last.error) || 'sendDocument failed after retries' };
+  }
+
+  async function sendMessageRetry(job, text, tries = 3) {
+    let last = null;
+    for (let i = 0; i < tries; i++) {
+      const r = await sendMessage(job, text);
+      if (r.ok) return r;
+      last = r;
+      if (i < tries - 1) await sleep(2000 * (i + 1));
+    }
+    return { ok: false, error: (last && last.error) || 'sendMessage failed after retries' };
+  }
+
+  /* ================= Стикер после TAS ================= */
+
+  // Случайный стикер в канал после TAS: пауза 1 сек, выбор из пака, отправка.
+  // Ошибка не роняет прогон — только лог владельцу.
+  async function sendRandomSticker(job) {
+    if (!job || !job.token) return;
+    await sleep(1000);
+    const r = await tgSend({
+      action: 'sticker',
+      token: job.token,
+      chatId: job.chatId,
+      pack: STICKER_PACK
+    });
+    if (r.ok) await sendLog(job, '🎲 A random sticker was sent to the channel.');
+    else await sendLog(job, 'ℹ️ The sticker could not be sent: ' + (r.error || 'unknown error'));
+  }
+
+  /* ================= storage: задача ================= */
+
+  async function patchJob(patch) {
+    const { job } = await get('job');
+    if (!job || !job.active) return null;
+    const next = { ...job, ...patch, updatedAt: Date.now() };
+    try {
+      await set({ job: next });
+    } catch (e) {
+      // storage.local переполнен (очень большие списки) — не сохраняем частично
+      return null;
+    }
+    return next;
+  }
+
+  /* ================= парсинг DOM ================= */
+
+  // Один элемент [data-testid="UserCell"] из списка following/followers
+  function parseCell(cell) {
+    try {
+      let handle = '';
+      const av = cell.querySelector('[data-testid^="UserAvatar-Container-"]');
+      if (av) handle = av.getAttribute('data-testid').slice('UserAvatar-Container-'.length);
+      if (!handle) {
+        const s = [...cell.querySelectorAll('span')].find((x) => /^@[\w]+$/.test(x.textContent.trim()));
+        if (s) handle = s.textContent.trim().slice(1);
+      }
+      if (!handle) return null;
+
+      const link =
+        cell.querySelector(`a[role="link"]:not([aria-hidden="true"])[href="/${handle}"]`) ||
+        cell.querySelector('a[role="link"]:not([aria-hidden="true"])');
+
+      let name = '';
+      if (link) {
+        const row = link.querySelector('div[dir="ltr"]');
+        if (row) name = row.textContent.replace(/\s+/g, ' ').trim();
+      }
+
+      const verified = !!cell.querySelector('[data-testid="icon-verified"]');
+
+      let bio = '';
+      let bioEl = cell.querySelector('div[dir="auto"][style*="overflow"]');
+      if (!bioEl) {
+        const cands = [...cell.querySelectorAll('div[dir="auto"]')].filter((d) => {
+          const r = d.getBoundingClientRect();
+          return r.width > 0 && r.height > 0;
+        });
+        bioEl = cands[cands.length - 1];
+      }
+      if (bioEl) bio = bioEl.textContent.replace(/\s+/g, ' ').trim().slice(0, 160);
+
+      return { handle, name: name.slice(0, 80), verified, bio };
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // Число подписчиков из шапки профиля (пример: "216.9M Followers", "1,234 Followers").
+  // ВАЖНО: X показывает его в ссылке /followers ЛИБО /verified_followers (новый
+  // вариант: <a href="/ник/verified_followers">1,661 Followers</a>). Старый
+  // селектор a[href*="/followers"] не ловил /verified_followers — число не
+  // находилось и на каждом профиле сгорали 20 секунд на пустое ожидание.
+  function findFollowersAnchor() {
+    // В обходе мы всегда на странице самого юзера — требуем, чтобы ссылка
+    // вела на текущий профиль, иначе можно зацепить карточку из твита.
+    const cur = currentPathHandle();
+    for (const sel of ['a[href$="/followers"]', 'a[href$="/verified_followers"]']) {
+      for (const a of document.querySelectorAll(sel)) {
+        const href = (a.getAttribute('href') || '').toLowerCase();
+        if (cur && href.indexOf('/' + cur + '/') === -1) continue;
+        const t = (a.textContent || '').replace(/\s+/g, ' ').trim();
+        if (/[\d.,]+\s*[KMB]?\s*followers?/i.test(t)) return a;
+      }
+    }
+    return null;
+  }
+
+  function parseFollowersCount() {
+    const a = findFollowersAnchor();
+    if (a) {
+      const t = (a.textContent || '').replace(/\s+/g, ' ').trim();
+      const m = t.match(/([\d.,]+\s*[KMB]?)\s*followers?/i);
+      if (m) return m[1].replace(/\s+/g, '');
+    }
+    for (const el of document.querySelectorAll('[aria-label*="ollowers" i]')) {
+      const m = (el.getAttribute('aria-label') || '').match(/([\d.,]+\s*[KMB]?)\s*(followers?)/i);
+      if (m) return m[1].replace(/\s+/g, '');
+    }
+    return '';
+  }
+
+  // Число → как его показывает сам X: 1661 → "1,661", 12345 → "12.3K", 2.1M…
+  function formatCount(n) {
+    if (typeof n !== 'number' || !isFinite(n)) return '';
+    const trim0 = (s) => s.replace(/\.0$/, '');
+    if (n >= 1e9) return trim0((n / 1e9).toFixed(1)) + 'B';
+    if (n >= 1e6) return trim0((n / 1e6).toFixed(1)) + 'M';
+    if (n >= 1e4) return trim0((n / 1e3).toFixed(1)) + 'K';
+    return n.toLocaleString('en-US');
+  }
+
+  // "1,661" / "216.9M" → число
+  function parseCountString(s) {
+    const t = String(s || '').replace(/[,\s]/g, '').toUpperCase();
+    const m = t.match(/^([\d.]+)([KMB])?$/);
+    if (!m) return NaN;
+    const n = parseFloat(m[1]);
+    if (!m[2]) return n;
+    return n * (m[2] === 'K' ? 1e3 : m[2] === 'M' ? 1e6 : 1e9);
+  }
+
+  /* ================= TAS: работа с Grok ================= */
+
+  // Вставка текста в React-контролируемое поле (Grok): без нативного сеттера
+  // React не увидит изменение и кнопка отправки не активируется.
+  function setReactInput(el, value) {
+    const proto = el instanceof window.HTMLTextAreaElement
+      ? window.HTMLTextAreaElement.prototype
+      : window.HTMLInputElement.prototype;
+    const desc = Object.getOwnPropertyDescriptor(proto, 'value');
+    if (desc && desc.set) desc.set.call(el, value);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
+  // Делит текст ответа Grok на блоки {…}. Считает вложенность скобок, так что
+  // фигурные скобки внутри текста (например в ссылках) не ломают разбивку.
+  function splitBraces(text) {
+    const s = String(text || '');
+    const parts = [];
+    let depth = 0;
+    let start = -1;
+    for (let i = 0; i < s.length; i++) {
+      const ch = s[i];
+      if (ch === '{') { if (depth === 0) start = i; depth++; }
+      else if (ch === '}') { if (depth > 0) depth--; if (depth === 0 && start >= 0) { parts.push(s.slice(start, i + 1)); start = -1; } }
+    }
+    return parts;
+  }
+
+  // Режем длинное сообщение на куски ≤3800 символов (Telegram лимит 4096),
+  // стараясь не разрывать строки; слишком длинные строки режем посимвольно.
+  function chunkToTelegram(text) {
+    const MAX = 3800;
+    const s = String(text || '');
+    if (s.length <= MAX) return [s];
+    const out = [];
+    let cur = '';
+    for (const line of s.split('\n')) {
+      if (cur && cur.length + line.length + 1 > MAX) { out.push(cur); cur = line; }
+      else cur = cur ? cur + '\n' + line : line;
+    }
+    if (cur) out.push(cur);
+    const final = [];
+    for (const p of out) {
+      if (p.length <= MAX) { final.push(p); continue; }
+      for (let i = 0; i < p.length; i += MAX) final.push(p.slice(i, i + MAX));
+    }
+    return final;
+  }
+
+  // Читаем ответ Grok из DOM: поднимаемся от кнопки «Copy text» нового
+  // сообщения по родителям, пока не дойдём до пузыря с текстом ответа — первого
+  // достаточно большого текстового блока. Если за 12 уровней большой блок не
+  // найден, возвращаем самый длинный фрагмент из пройденного.
+  function extractLastGrokMessage(btn) {
+    let el = (btn && btn.parentElement) || null;
+    if (!el) {
+      const btns = document.querySelectorAll(GROK_COPY_SEL);
+      if (!btns.length) return '';
+      el = btns[btns.length - 1].parentElement;
+    }
+    const seen = [];
+    for (let i = 0; i < 12 && el && el !== document.body; i++) {
+      const t = (el.innerText || '').trim();
+      if (t.length > 300) return t;
+      seen.push(t);
+      el = el.parentElement;
+    }
+    let best = '';
+    for (const t of seen) if (t.length > best.length) best = t;
+    return best;
+  }
+
+  // Отличает «похоже на ответ Grok» от мусора/служебных записей буфера:
+  // длинный текст, фигурные скобки или ссылки на x.com. Короткий мусор вроде
+  // «6382732135» (служебный ID, который страница пишет в буфер) — не проходит.
+  function looksLikeAnswer(t) {
+    const s = String(t || '').trim();
+    if (!s) return false;
+    if (s.length > 500) return true;
+    if (s.indexOf('{') !== -1) return true;
+    return /https:\/\/(x|twitter)\.com\//i.test(s);
+  }
+
+  // Быстрый способ снять число подписчиков: fetch страницы профиля прямо из
+  // текущей вкладки (cookies уходят автоматически) и разбор встроенного в HTML
+  // состояния. Навигация по вкладке НЕ происходит — это в десятки раз быстрее
+  // обхода страниц. При неудаче возвращается { ok:false } → юзер уходит в обход.
+  async function fetchFollowersCountFast(handle) {
+    // Таймаут 12 c: зависший запрос не должен стопорить весь цикл (сторож
+    // сбросил бы задачу только через 5 минут).
+    const ctrl = new AbortController();
+    const to = setTimeout(() => ctrl.abort(), 12000);
+    try {
+      // Без x-requested-with: он кричит серверу «это скрипт». Accept как у
+      // обычного перехода по ссылке.
+      const res = await fetch('https://x.com/' + encodeURIComponent(handle), {
+        credentials: 'include',
+        cache: 'no-store',
+        signal: ctrl.signal,
+        headers: { accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8' }
+      });
+      if (!res.ok) return { ok: false };
+      const text = await res.text();
+
+      // 1) window.__INITIAL_STATE__ = JSON.parse("…") — в блобе лежат users с followers_count.
+      // Внутри кавычек — JSON-строка с экранированием ("{\"users\":…}"), поэтому сначала
+      // «разворачиваем» её в текст документа (как это делает сам JS), затем парсим.
+      const m = text.match(/window\.__INITIAL_STATE__\s*=\s*JSON\.parse\("((?:[^"\\]|\\.)*)"\)/);
+      if (m) {
+        try {
+          const doc = JSON.parse('"' + m[1] + '"');
+          const state = JSON.parse(doc);
+          const count = findFollowersInState(state, handle);
+          if (count != null) return { ok: true, count };
+        } catch (e) { /* пробуем следующий вариант */ }
+      }
+
+      // 2) og:description: «… 1,661 Followers, 234 Following, …»
+      const metaTag = text.match(/<meta[^>]*property=["']og:description["'][^>]*>/i);
+      if (metaTag) {
+        const c = metaTag[0].match(/content=["']([^"']*)["']/i);
+        const mm = c ? c[1].match(/([\d.,]+\s*[KMB]?)\s*followers?/i) : null;
+        if (mm) {
+          const n = parseCountString(mm[1]);
+          if (isFinite(n)) return { ok: true, count: n };
+        }
+      }
+      return { ok: false };
+    } catch (e) {
+      return { ok: false };
+    } finally {
+      clearTimeout(to);
+    }
+  }
+
+  // Ищем юзера с нужным screen_name в блобе __INITIAL_STATE__ и возвращаем
+  // followers_count. users там — объект { id: user } либо массив пар [id, user]
+  // либо просто массив юзеров; юзер — любой объект с screen_name/username.
+  function findFollowersInState(state, handle) {
+    const h = String(handle).toLowerCase();
+    const candidates = [];
+    const walk = (container) => {
+      if (!container || typeof container !== 'object') return;
+      if (container.screen_name || container.username) { candidates.push(container); return; }
+      if (Array.isArray(container)) {
+        for (const item of container) walk(item);
+      } else {
+        for (const k of Object.keys(container)) {
+          const v = container[k];
+          if (v && typeof v === 'object') walk(v);
+        }
+      }
+    };
+    walk(state.users);
+    if (state.user && typeof state.user === 'object') candidates.push(state.user);
+    for (const u of candidates) {
+      const sn = String(u.screen_name || u.username || '').toLowerCase();
+      if (sn === h && typeof u.followers_count === 'number') return u.followers_count;
+    }
+    return null;
+  }
+
+  /* ================= цикл сбора ================= */
+
+  // Скроллит список до конца, собирая ТОЛЬКО верифицированных пользователей.
+  // Сталл считаем по ЛЮБЫМ новым ячейкам (не только verified) — иначе список,
+  // где подряд идут неверифицированные аккаунты, был бы оборван раньше конца.
+  async function collectUsers(stage, maxMs, onProgress) {
+    const found = new Map();   // verified-пользователи
+    const seen = new Set();    // все ники, что встречались (для детекции конца списка)
+    const startAt = Date.now();
+    let stall = 0;
+    let scrolls = 0;
+    const tlSel = stage === 'followers'
+      ? '[aria-label^="Timeline: Follower"]'
+      : '[aria-label^="Timeline: Following"]';
+
+    while (Date.now() - startAt < maxMs) {
+      const { job } = await get('job');
+      if (!job || !job.active) return [...found.values()]; // остановлено
+
+      const timeline = document.querySelector(tlSel);
+      if (!timeline) {
+        scrolls++;
+        await humanScroll(tlSel);
+        await sleep(humanPause(1100, 2200));
+        continue;
+      }
+
+      const cells = timeline.querySelectorAll('[data-testid="UserCell"]');
+      let added = 0;
+      for (const cell of cells) {
+        const u = parseCell(cell);
+        if (!u || !u.handle) continue;
+        if (!seen.has(u.handle)) {
+          seen.add(u.handle);
+          added++; // любая новая ячейка = прогресс скролла
+          if (u.verified) found.set(u.handle, u);
+        }
+      }
+      stall = added === 0 ? stall + 1 : 0;
+      if (onProgress) await onProgress(found.size);
+      if (stall >= 4) break;      // дошли до конца списка
+      if (scrolls >= 900) break;  // предохранитель
+      scrolls++;
+      await humanScroll(tlSel);
+      await sleep(humanPause(800, 1600, 0.1, 3000));
+    }
+    return [...found.values()];
+  }
+
+  // «Человеческий» скролл: спускаемся вниз порциями со случайными паузами,
+  // изредка слегка отматываясь назад. Мгновенный «прыжок в конец каждые N мс»
+  // — самый читаемый бот-паттерн, поэтому скроллим поэтапно. Окно + (если есть)
+  // внутренний скролл-контейнер таймлайна.
+  async function humanScroll(tlSel) {
+    const sc = document.scrollingElement || document.documentElement;
+    const target = sc.scrollHeight;
+    let guard = 0;
+    while (sc.scrollTop < target - 150 && guard++ < 60) {
+      const step = 500 + Math.random() * 800;
+      sc.scrollTop = Math.min(target, sc.scrollTop + step);
+      window.scrollTo(0, sc.scrollTop);
+      await sleep(90 + Math.random() * 220);
+      if (Math.random() < 0.07) {
+        // иногда чуть назад — как живой человек, проверяющий строки
+        sc.scrollTop = Math.max(0, sc.scrollTop - (50 + Math.random() * 140));
+        window.scrollTo(0, sc.scrollTop);
+        await sleep(120 + Math.random() * 200);
+      }
+    }
+    // Дожимаем до низа ТОЛЬКО если осталось чуть-чуть — иначе на огромных
+    // списках (виртуализированный скролл) это был бы мгновенный телепорт.
+    if (target - sc.scrollTop < 2000) { sc.scrollTop = target; window.scrollTo(0, target); }
+    const tl = document.querySelector(tlSel);
+    let el = tl ? tl.parentElement : null;
+    while (el && el !== document.body) {
+      if (el.scrollHeight > el.clientHeight + 2) {
+        const ov = getComputedStyle(el).overflowY;
+        if (ov === 'auto' || ov === 'scroll') {
+          el.scrollTop = el.scrollHeight;
+          break;
+        }
+      }
+      el = el.parentElement;
+    }
+  }
+
+  async function waitFor(fn, timeoutMs, intervalMs = 500) {
+    const startAt = Date.now();
+    while (Date.now() - startAt < timeoutMs) {
+      const el = fn();
+      if (el) return el;
+      await sleep(intervalMs);
+    }
+    return null;
+  }
+
+  /* ================= поток задачи (вкладка-скрейпер) ================= */
+
+  async function maybeRunJob() {
+    const { job } = await get('job');
+    if (!job || !job.active) return;
+
+    try { chrome.runtime.sendMessage({ type: 'REGISTER_JOB_TAB' }); } catch (e) { /* ignore */ }
+
+    const timeoutMs = job.timeoutMs || BASE_TIMEOUT_MS;
+    if (Date.now() - job.startedAt > timeoutMs) {
+      await notify(job, `⏰ ScrXper: ${job.kind === 'tas' ? 'TAS' : 'parsing'} @${job.handle} timed out. Run the task again.`);
+      await abort(job, 'Timeout');
+      return;
+    }
+
+    // Проверка, что нас не выкинуло на страницу входа
+    const host = location.hostname.toLowerCase();
+    const path = location.pathname.toLowerCase();
+    const loginWall =
+      host.includes('login') ||
+      path.startsWith('/login') ||
+      !!document.querySelector('a[href="/i/flow/login"], a[href="/login"]');
+    if (loginWall) {
+      await notify(job, `❌ ScrXper: you need to be logged in to X to ${job.kind === 'tas' ? 'run TAS' : 'parse'} @${job.handle}. Open x.com, sign in, and start again.`);
+      await abort(job, 'Login to X required');
+      return;
+    }
+
+    // TAS — свой поток: сбор ссылок → Grok → канал
+    if (job.kind === 'tas') { await runTasStep(job); return; }
+
+    if (job.phase === 'enrich') {
+      // enrichMode 'fetch' = быстрый путь без навигации; иначе — обход профилей
+      if (job.enrichMode === 'fetch') { await runEnrichFetchStep(job); return; }
+      await runEnrichStep(job);
+      return;
+    }
+    const stage = job.phase === 'followers' ? 'followers' : 'following';
+    await runCollectStage(job, stage);
+  }
+
+  // Собираем верифицированных из списка following / followers.
+  async function runCollectStage(job, stage) {
+    const stageLabel = stage === 'following' ? 'following' : 'followers';
+    if (currentPathHandle() !== job.handle.toLowerCase() || currentStage() !== stage) {
+      // X мог редиректнуть профиль (переименован/удалён) — защита от цикла
+      const gk = 'sx_redir_target_' + job.handle.toLowerCase();
+      let n = 0;
+      try { n = Number(sessionStorage.getItem(gk)) || 0; } catch (e) { /* ignore */ }
+      if (n >= 4) {
+        await sendMessage(job, `❌ ScrXper: X keeps redirecting @${job.handle} — the profile may be renamed or deleted. Check the username and start again.`);
+        await abort(job, 'Profile redirects');
+        return;
+      }
+      try { sessionStorage.setItem(gk, String(n + 1)); } catch (e) { /* ignore */ }
+      goTo('/' + job.handle + '/' + stage);
+      return;
+    }
+    try { sessionStorage.removeItem('sx_redir_target_' + job.handle.toLowerCase()); } catch (e) { /* ignore */ }
+
+    await patchJob({ status: `Collecting ${stageLabel}…` });
+
+    // Сначала проверяем ошибки страницы — на rate-limit странице таймлайн
+    // вообще не отрисуется, и без этой проверки была бы ложная ошибка
+    const head = (document.body ? document.body.innerText.slice(0, 4000) : '').toLowerCase();
+    if (/rate limit|try again later|something went wrong/.test(head)) {
+      await sendMessage(job, `⚠️ ScrXper: X is temporarily rate-limiting while collecting @${job.handle}. Wait 10–20 minutes and try again.`);
+      await abort(job, 'X rate limit');
+      return;
+    }
+
+    const tlSel = stage === 'followers'
+      ? '[aria-label^="Timeline: Follower"]'
+      : '[aria-label^="Timeline: Following"]';
+    const timeline = await waitFor(() => document.querySelector(tlSel), 15000, 400);
+    if (!timeline) {
+      await sendMessage(job, `❌ ScrXper: could not load the ${stageLabel} list for @${job.handle}. The profile may be private, blocked, or X is showing an error.`);
+      await abort(job, 'Could not load the list');
+      return;
+    }
+
+    const users = await collectUsers(stage, STAGE_TIMEOUT_MS, async (count) => {
+      await patchJob({
+        progress: { stage, collected: count },
+        status: `Collecting ${stageLabel}: ${count.toLocaleString('en-US')} verified`
+      });
+    });
+
+    // Задачу могли остановить («Стоп» / закрыли вкладку) — не продолжаем.
+    const { job: fresh } = await get('job');
+    if (!fresh || !fresh.active) return;
+    job = fresh;
+
+    const key = stage === 'following' ? 'users' : 'users2';
+    const next = { ...job, [key]: users, progress: { stage, collected: users.length } };
+
+    if (stage === 'following') {
+      next.phase = 'followers';
+      next.status = `Following: ${users.length.toLocaleString('en-US')} verified — moving to followers…`;
+      try { await set({ job: next }); } catch (e) { await abort(job, 'Storage error'); return; }
+      await sleep(humanPause(800, 2000)); // пауза перед переходом — не «телепорт»
+      goTo('/' + job.handle + '/followers');
+      return;
+    }
+
+    // Оба списка собраны — строим очередь обхода профилей (без дублей),
+    // чтобы снять число подписчиков каждого верифицированного юзера.
+    const queueMap = new Map();
+    [...(job.users || []), ...users].forEach((u) => {
+      const k = (u.handle || '').toLowerCase();
+      if (k && !queueMap.has(k)) queueMap.set(k, u);
+    });
+    const queue = [...queueMap.values()];
+    next.enrichQueue = queue;
+    next.enrichIndex = 0;
+    next.enrichFails = 0;
+    next.results = {};
+
+    if (!queue.length) {
+      next.phase = 'report';
+      next.status = 'No verified accounts — building report…';
+      try { await set({ job: next }); } catch (e) { await abort(job, 'Storage error'); return; }
+      await finishReport(next);
+      return;
+    }
+
+    next.phase = 'enrich';
+    next.enrichMode = 'fetch';   // быстрый путь: fetch без навигации по профилям
+    next.enrichFails = 0;
+    next.visitQueue = [];        // кому не сняли число через fetch — обойдём страницы
+    next.timeoutMs = Math.min(MAX_TIMEOUT_MS, BASE_TIMEOUT_MS + queue.length * ENRICH_PER_USER_MS);
+    next.progress = { stage: 'enrich', collected: 0, total: queue.length };
+    next.status = `Follower counts (fast): 0/${queue.length}…`;
+    try { await set({ job: next }); } catch (e) { await abort(job, 'Storage error'); return; }
+    await runEnrichFetchStep(next);
+    return;
+  }
+
+  // Этап 3 (быстрый путь): не открывая новых вкладок, fetch'им страницу профиля
+  // и вытаскиваем followers_count из встроенного состояния. В десятки раз быстрее
+  // обхода. Не снятые таким способом ники переходят в runEnrichStep (обход).
+  async function runEnrichFetchStep(initialJob) {
+    let job = initialJob;
+    const queue = job.enrichQueue || [];
+    let idx = job.enrichIndex || 0;
+    const results = { ...(job.results || {}) };
+    let visitQueue = [...(job.visitQueue || [])];
+    let burst = job.enrichFails || 0;
+
+    while (idx < queue.length) {
+      const { job: cur } = await get('job');
+      if (!cur || !cur.active) return; // остановлено
+      job = cur;
+      const user = queue[idx];
+      const key = (user.handle || '').toLowerCase();
+
+      const r = await fetchFollowersCountFast(key);
+      if (r.ok) {
+        results[key] = { followers: formatCount(r.count) };
+        burst = 0;
+      } else {
+        visitQueue.push(key);
+        burst++;
+      }
+      idx++;
+
+      // 6 неудач подряд — похоже на rate-limit или X изменил разметку:
+      // остаток добираем обходом страниц (у того свои защитные механизмы).
+      if (burst >= 6) {
+        for (let i = idx; i < queue.length; i++) visitQueue.push(String(queue[i].handle || '').toLowerCase());
+        idx = queue.length;
+      }
+
+      const next = await patchJob({
+        enrichIndex: idx,
+        enrichFails: burst,
+        results,
+        visitQueue,
+        progress: { stage: 'enrich', collected: idx, total: queue.length },
+        status: `Follower counts (fast): ${idx}/${queue.length}`
+      });
+      if (!next) return; // задача остановлена или storage переполнен
+      job = next;
+      // Паузы «как человек листает»: неравномерные, каждые ~15 запросов — отдых.
+      if (idx % 15 === 0) await sleep(2500 + Math.random() * 3000);
+      await sleep(humanPause(900, 2000, 0.1, 3500));
+    }
+
+    const { job: finalJob } = await get('job');
+    if (!finalJob || !finalJob.active) return;
+    job = finalJob;
+
+    if (visitQueue.length) {
+      const next = await patchJob({
+        phase: 'enrich',
+        enrichMode: 'visit',
+        enrichQueue: visitQueue.map((h) => ({ handle: h, name: '', verified: true, bio: '' })),
+        enrichIndex: 0,
+        enrichFails: 0,
+        visitQueue: [],
+        progress: { stage: 'enrich', collected: 0, total: visitQueue.length },
+        status: `Visiting ${visitQueue.length} profile(s) for follower counts…`
+      });
+      if (!next) return;
+      await sleep(humanPause(800, 1800));
+      goTo('/' + visitQueue[0]);
+      return;
+    }
+
+    await finishReport(job);
+  }
+
+  // Этап 3 (обход): по очереди заходим на профиль каждого юзера, чьё число не
+  // снялось через fetch, и берём подписчиков из шапки. Сбои отдельных профилей
+  // прогон не ломают — только серия rate-limit-ошибок останавливает задачу.
+  async function runEnrichStep(job) {
+    const queue = job.enrichQueue || [];
+    const idx = job.enrichIndex || 0;
+    if (idx >= queue.length) { await finishReport(job); return; }
+    const user = queue[idx];
+    const key = (user.handle || '').toLowerCase();
+
+    if (currentPathHandle() !== key) {
+      // X мог редиректнуть на новый ник — защита от бесконечного цикла
+      const gk = 'sx_redir_' + key;
+      let n = 0;
+      try { n = Number(sessionStorage.getItem(gk)) || 0; } catch (e) { /* ignore */ }
+      if (n >= 2) {
+        const next = await patchJob({
+          enrichIndex: idx + 1,
+          results: { ...(job.results || {}), [key]: { followers: '' } },
+          progress: { stage: 'enrich', collected: idx + 1, total: queue.length },
+          status: `@${user.handle}: redirect loop — skipped (${idx + 1}/${queue.length})`
+        });
+        if (!next) return; // задача остановлена
+        if (idx + 1 >= queue.length) { await finishReport(next); }
+        else { await sleep(humanPause(1000, 2200)); goTo('/' + queue[idx + 1].handle); }
+        return;
+      }
+      try { sessionStorage.setItem(gk, String(n + 1)); } catch (e) { /* ignore */ }
+      goTo('/' + user.handle);
+      return;
+    }
+    try { sessionStorage.removeItem('sx_redir_' + key); } catch (e) { /* ignore */ }
+
+    // Быстрая проверка rate-limit / сломанной страницы
+    const head = (document.body ? document.body.innerText.slice(0, 3000) : '').toLowerCase();
+    const rateLimited = /rate limit|try again later|something went wrong|temporarily blocked/.test(head);
+
+    await patchJob({ status: `Checking @${user.handle} (${idx + 1}/${queue.length})…` });
+
+    let followers = '';
+    if (!rateLimited) {
+      // Число — в шапке профиля, в ссылке /followers или /verified_followers;
+      // на обычной странице оно есть уже через пару секунд.
+      followers = (await waitFor(() => parseFollowersCount(), 8000, 300)) || '';
+    }
+
+    const results = { ...(job.results || {}), [key]: { followers } };
+    const fails = rateLimited ? (job.enrichFails || 0) + 1 : 0;
+    if (rateLimited && fails >= MAX_CONSECUTIVE_FAILS) {
+      await sendMessage(job, `⚠️ ScrXper: X is rate-limiting while checking profiles — stopped at ${idx + 1}/${queue.length}. Wait 10–20 minutes and run again.`);
+      await abort(job, 'X rate limit during profile check');
+      return;
+    }
+
+    const next = await patchJob({
+      enrichIndex: idx + 1,
+      enrichFails: fails,
+      results,
+      progress: { stage: 'enrich', collected: idx + 1, total: queue.length },
+      status: `@${user.handle}: ${followers || '?'} followers (${idx + 1}/${queue.length})`
+    });
+    if (!next) return; // задача остановлена или storage переполнен
+    if (idx + 1 >= queue.length) {
+      await finishReport(next);
+    } else {
+      await sleep(humanPause(1200, 2400)); // не долбим X подряд
+      goTo('/' + queue[idx + 1].handle);
+    }
+  }
+
+  /* ================= TAS: поток задачи ================= */
+
+  async function runTasStep(job) {
+    switch (job.phase) {
+      case 'tas-following': await runTasCollect(job, 'following'); return;
+      case 'tas-followers': await runTasCollect(job, 'followers'); return;
+      case 'tas-grok': await runTasGrok(job); return;
+      case 'tas-send': await runTasSend(job); return;
+      default: {
+        // Незнакомая фаза (например устаревший job из старой версии) — заново.
+        const next = await patchJob({ phase: 'tas-following', status: 'TAS: restarting…' });
+        if (!next) return;
+        goTo('/' + job.handle + '/following');
+      }
+    }
+  }
+
+  // TAS-этап сбора: верифицированные ссылки из following / followers (без био,
+  // подписчиков и прочего — в очередь идёт только список ссылок).
+  async function runTasCollect(job, stage) {
+    if (currentPathHandle() !== job.handle.toLowerCase() || currentStage() !== stage) {
+      const gk = 'sx_redir_target_' + job.handle.toLowerCase();
+      let n = 0;
+      try { n = Number(sessionStorage.getItem(gk)) || 0; } catch (e) { /* ignore */ }
+      if (n >= 4) {
+        await sendLog(job, `❌ ScrXper TAS: X keeps redirecting @${job.handle} — the profile may be renamed or deleted. Check the username and start again.`);
+        await abort(job, 'Profile redirects');
+        return;
+      }
+      try { sessionStorage.setItem(gk, String(n + 1)); } catch (e) { /* ignore */ }
+      goTo('/' + job.handle + '/' + stage);
+      return;
+    }
+    try { sessionStorage.removeItem('sx_redir_target_' + job.handle.toLowerCase()); } catch (e) { /* ignore */ }
+
+    await patchJob({ status: `TAS: collecting verified ${stage}…` });
+
+    const head = (document.body ? document.body.innerText.slice(0, 4000) : '').toLowerCase();
+    if (/rate limit|try again later|something went wrong/.test(head)) {
+      await sendLog(job, `⚠️ ScrXper TAS: X is temporarily rate-limiting while collecting @${job.handle}. Wait 10–20 minutes and try again.`);
+      await abort(job, 'X rate limit');
+      return;
+    }
+
+    const tlSel = stage === 'followers'
+      ? '[aria-label^="Timeline: Follower"]'
+      : '[aria-label^="Timeline: Following"]';
+    const timeline = await waitFor(() => document.querySelector(tlSel), 15000, 400);
+    if (!timeline) {
+      await sendLog(job, `❌ ScrXper TAS: could not load the ${stage} list for @${job.handle}. The profile may be private, blocked, or X is showing an error.`);
+      await abort(job, 'Could not load the list');
+      return;
+    }
+
+    const users = await collectUsers(stage, STAGE_TIMEOUT_MS, async (count) => {
+      await patchJob({
+        progress: { stage, collected: count },
+        status: `TAS: verified ${stage}: ${count.toLocaleString('en-US')}`
+      });
+    });
+
+    const { job: fresh } = await get('job');
+    if (!fresh || !fresh.active) return;
+    job = fresh;
+
+    const key = stage === 'following' ? 'tasUsers' : 'tasUsers2';
+    const next = { ...job, [key]: users, progress: { stage, collected: users.length } };
+
+    if (stage === 'following') {
+      next.phase = 'tas-followers';
+      next.status = `TAS: following — ${users.length.toLocaleString('en-US')} verified. Moving to followers…`;
+      try { await set({ job: next }); } catch (e) { await abort(job, 'Storage error'); return; }
+      await sleep(humanPause(800, 2000));
+      goTo('/' + job.handle + '/followers');
+      return;
+    }
+
+    // Оба списка собраны — дедуплицируем и строим список ссылок.
+    const seen = new Set();
+    const links = [];
+    [...(job.tasUsers || []), ...users].forEach((u) => {
+      const h = (u.handle || '').toLowerCase();
+      if (h && !seen.has(h)) { seen.add(h); links.push('https://x.com/' + h); }
+    });
+
+    if (!links.length) {
+      await sendLog(job, `❌ ScrXper TAS: no verified accounts found for @${job.handle} — nothing to send to Grok.`);
+      await abort(job, 'No verified links');
+      return;
+    }
+
+    next.tasLinks = links;
+    next.phase = 'tas-grok';
+    next.status = `TAS: ${links.length.toLocaleString('en-US')} verified links — opening Grok…`;
+    next.timeoutMs = Math.min(MAX_TIMEOUT_MS, (Date.now() - job.startedAt) + 60 * 60 * 1000);
+    next.progress = { stage: 'grok' };
+    try { await set({ job: next }); } catch (e) { await abort(job, 'Storage error'); return; }
+    await sleep(humanPause(800, 2000));
+    goTo('/i/grok');
+  }
+
+  // TAS-этап Grok: вставка промта со ссылками, отправка, ожидание ответа,
+  // копирование, разбивка на части {…}.
+  async function runTasGrok(job) {
+    const path = location.pathname.toLowerCase();
+    if (!path.startsWith('/i/grok')) {
+      const gk = 'sx_redir_grok_' + job.handle.toLowerCase();
+      let n = 0;
+      try { n = Number(sessionStorage.getItem(gk)) || 0; } catch (e) { /* ignore */ }
+      if (n >= 3) {
+        await sendLog(job, '❌ ScrXper TAS: X keeps redirecting away from Grok. Open x.com/i/grok manually, then start the task again.');
+        await abort(job, 'Grok redirect loop');
+        return;
+      }
+      try { sessionStorage.setItem(gk, String(n + 1)); } catch (e) { /* ignore */ }
+      goTo('/i/grok');
+      return;
+    }
+    try { sessionStorage.removeItem('sx_redir_grok_' + job.handle.toLowerCase()); } catch (e) { /* ignore */ }
+
+    await patchJob({ status: 'TAS: opening Grok…' });
+    // Основной селектор — точный, из разметки пользователя; запасной — любое
+    // текстовое поле в главной области (на случай другого плейсхолдера).
+    const ta = await waitFor(() =>
+      document.querySelector(GROK_TEXTAREA_SEL) ||
+      document.querySelector('main textarea[placeholder]'),
+      60000, 500);
+    if (!ta) {
+      await sendLog(job, '❌ ScrXper TAS: could not find the Grok input on x.com/i/grok. Make sure you are logged in and Grok is available for your account.');
+      await abort(job, 'Grok input not found');
+      return;
+    }
+
+    // Собираем ссылки (с предохранителем размера — очень длинные промты Grok
+    // может просто отклонить).
+    let links = job.tasLinks || [];
+    let truncated = false;
+    let joined = links.join(', ');
+    while (joined.length > GROK_MAX_LINKS_CHARS && links.length > 1) {
+      links = links.slice(0, Math.ceil(links.length / 2));
+      joined = links.join(', ');
+      truncated = true;
+    }
+    const linksText = joined +
+      (truncated ? `\n\n[Note: the list was truncated to the first ${links.length} accounts because of input size limits.]` : '');
+    if (!linksText.trim()) {
+      await sendLog(job, '❌ ScrXper TAS: the verified links list is empty for @' + job.handle + '.');
+      await abort(job, 'No verified links');
+      return;
+    }
+
+    // «Уже отправили промт» — защита от повторной отправки, если вкладку
+    // перезагрузили посреди ожидания ответа: промт не дублируем, просто ждём.
+    // Флаг привязан к startedAt конкретной задачи: даже если вкладка каким-то
+    // образом переживёт предыдущий прогон, новая задача его не подхватит.
+    const sentFlag = 'sx_grok_sent_' + job.handle.toLowerCase();
+    let sent = false;
+    try { sent = sessionStorage.getItem(sentFlag) === String(job.startedAt); } catch (e) { /* ignore */ }
+
+    // Промт вычисляем ВСЕГДА (не только при отправке): даже в resume-пути
+    // (после перезагрузки вкладки) guard «не поймали ли мы сам промт» должен
+    // работать — иначе в канал мог бы уйти текст промта вместо ответа.
+    const fullPrompt = TAS_PROMPT.replace(TAS_LINKS_PLACEHOLDER, linksText);
+    if (!sent) {
+      ta.focus();
+      setReactInput(ta, fullPrompt);
+      await sleep(humanPause(600, 1400));
+
+      const sendBtn = await waitFor(() => {
+        const b = document.querySelector(GROK_SEND_SEL);
+        return b && !b.disabled ? b : null;
+      }, 10000, 300);
+      if (!sendBtn) {
+        await sendLog(job, '❌ ScrXper TAS: could not find the Grok send button after typing the prompt.');
+        await abort(job, 'Grok send button not found');
+        return;
+      }
+      sendBtn.click();
+      try { sessionStorage.setItem(sentFlag, String(job.startedAt)); } catch (e) { /* ignore */ }
+      await patchJob({ status: 'TAS: prompt sent to Grok — waiting for the answer…' });
+    } else {
+      await patchJob({ status: 'TAS: resumed after a reload — waiting for the Grok answer…' });
+    }
+
+    // «Базовая линия» кнопок Copy ДО ожидания: в старой переписке они уже есть,
+    // а ответ считается готовым, когда кнопок становится БОЛЬШЕ (новое сообщение
+    // добавило свою панель действий). Кнопки Like намеренно не учитываем: они
+    // могут появляться в сайдбаре/рекомендациях и давать ложное срабатывание,
+    // а Copy существует только у строк сообщений (и появляется вместе с Like).
+    const copyBefore = document.querySelectorAll(GROK_COPY_SEL).length;
+
+    const grokStart = Date.now();
+    let answered = false;
+    while (Date.now() - grokStart < GROK_TIMEOUT_MS) {
+      const { job: cur } = await get('job');
+      if (!cur || !cur.active) return;
+      job = cur;
+      if (document.querySelectorAll(GROK_COPY_SEL).length > copyBefore) {
+        answered = true;
+        break;
+      }
+      const head = (document.body ? document.body.innerText.slice(0, 1500) : '').toLowerCase();
+      if (/rate limit|something went wrong/.test(head) && !document.querySelector(GROK_TEXTAREA_SEL)) {
+        await sendLog(job, '⚠️ ScrXper TAS: X / Grok shows an error or rate-limit page. Wait 10–20 minutes and run again.');
+        await abort(job, 'Grok error page');
+        return;
+      }
+      const elapsed = Math.round((Date.now() - grokStart) / 1000);
+      await patchJob({ status: `TAS: Grok is thinking… ${elapsed}s` });
+      await sleep(3000);
+    }
+    if (!answered) {
+      await sendLog(job, '❌ ScrXper TAS: Grok did not finish the answer in 15 minutes. Open x.com/i/grok to check the status.');
+      await abort(job, 'Grok timeout');
+      return;
+    }
+    await patchJob({ status: 'TAS: Grok answered — copying the result…' });
+
+    // Копируем ответ и читаем его. Несколько попыток: Grok может сначала
+    // показать кнопку Copy у САМОГО ВОПРОСА (наш промт) — тогда ждём, когда
+    // появится следующее сообщение, и читаем уже настоящий ответ.
+    let text = '';
+    let foundPrompt = false;
+    for (let attempt = 0; attempt < 3 && !text; attempt++) {
+      const copyBtns = document.querySelectorAll(GROK_COPY_SEL);
+      if (!copyBtns.length) break;
+      const copyBtn = copyBtns[copyBtns.length - 1]; // кнопка последнего сообщения
+
+      // СБРОС lastCopied: устаревший текст из прошлого копирования в этой
+      // вкладке не должен попасть в посты, если новый захват не сработает.
+      lastCopied = '';
+      copyBtn.click();
+
+      // Ждём ОСМЫСЛЕННЫЙ захват буфера: страница Grok может параллельно
+      // писать в буфер свои служебные значения (ID сообщения и т.п.) — их
+      // игнорируем, ждём только текст с ссылками на x.com.
+      let clip = await waitFor(() => {
+        const t = lastCopied;
+        if (!t || t.length < 200) return null;
+        return (t.match(/https:\/\/(x|twitter)\.com\//g) || []).length >= 2 ? t : null;
+      }, 6000, 200) || '';
+      if (!clip) {
+        try { clip = (await navigator.clipboard.readText()) || ''; } catch (e) { clip = ''; }
+      }
+
+      // Надёжный источник — сам ответ в DOM: поднимаемся от кнопки Copy нового
+      // сообщения до пузыря с текстом ответа. Буфер — запасной вариант.
+      const domText = extractLastGrokMessage(copyBtn);
+      let cand = '';
+      if (domText && looksLikeAnswer(domText)) cand = domText;
+      else if (clip && looksLikeAnswer(clip)) cand = clip;
+      else if (domText) cand = domText;
+      else if (clip) cand = clip;
+
+      // Если поймали свой же промт (вопрос), а не ответ — ждём, когда кнопок
+      // Copy станет больше (появится ответ), и пробуем ещё раз.
+      if (cand && fullPrompt && (cand.includes(fullPrompt) || fullPrompt.includes(cand))) {
+        foundPrompt = true;
+        await waitFor(() => document.querySelectorAll(GROK_COPY_SEL).length > copyBtns.length, 30000, 1000);
+        continue;
+      }
+      if (cand) text = cand;
+    }
+
+    // Мусор в канал не шлём: без ссылок/скобок и короче 30 символов — это
+    // служебная запись буфера (ID сообщения и т.п.), а не ответ нейросети.
+    // Порог небольшой, чтобы короткий легитимный ответ вроде «кандидатов
+    // не найдено» не убивал прогон.
+    if (!text || (!looksLikeAnswer(text) && text.trim().length < 30)) {
+      await sendLog(job, '❌ ScrXper TAS: could not read the Grok answer (empty or unreadable). Open x.com/i/grok and check the response.');
+      await abort(job, 'Empty Grok answer');
+      return;
+    }
+    if (foundPrompt && !text) {
+      await sendLog(job, '❌ ScrXper TAS: could not read the Grok answer — only the prompt message was found. Open x.com/i/grok and check the response.');
+      await abort(job, 'Answer not found');
+      return;
+    }
+
+    // Делим на части {…} (без внешних скобок) — каждая часть = один пост
+    let parts = splitBraces(text)
+      .map((p) => p.replace(/^\s*\{\s*/, '').replace(/\s*\}\s*$/, '').trim())
+      .filter((p) => p.length > 8);
+    if (!parts.length && text.trim()) {
+      parts = [text.trim()];
+      await sendLog(job, 'ℹ️ ScrXper TAS: the Grok answer does not contain {...} blocks — sending it as a single post.');
+    }
+
+    const next = await patchJob({
+      phase: 'tas-send',
+      tasParts: parts,
+      tasSendIndex: 0,
+      progress: { stage: 'send', collected: 0, total: parts.length },
+      status: `TAS: Grok answered — sending ${parts.length.toLocaleString('en-US')} post(s) to the channel…`,
+      // Бюджет на отправку растёт с числом постов (~3 c на пост + запас 10 мин)
+      timeoutMs: Math.min(MAX_TIMEOUT_MS, (Date.now() - job.startedAt) + parts.length * 3000 + 10 * 60 * 1000)
+    });
+    if (!next) return;
+    await runTasSend(next);
+  }
+
+  // TAS-этап отправки: посты в канал по очереди, с задержкой ~1 сек.
+  async function runTasSend(job) {
+    const parts = job.tasParts || [];
+    if (!parts.length) { await tasFinish(job); return; }
+    let idx = job.tasSendIndex || 0;
+    while (idx < parts.length) {
+      const { job: cur } = await get('job');
+      if (!cur || !cur.active) return;
+      job = cur;
+      if (Date.now() - job.startedAt > (job.timeoutMs || TAS_TIMEOUT_MS)) {
+        await sendLog(job, '⏰ ScrXper TAS: sending to the channel timed out — some posts may be missing. Run the task again.');
+        await abort(job, 'Timeout while sending');
+        return;
+      }
+
+      const msgs = chunkToTelegram(parts[idx]);
+      for (let j = 0; j < msgs.length; j++) {
+        const r = await sendMessageRetry(job, msgs[j]);
+        if (!r.ok) {
+          await sendLog(job, `❌ ScrXper TAS: could not send post ${idx + 1}/${parts.length} to the channel: ${r.error}. Check the channel ID and that the bot is an admin there.`);
+          await abort(job, 'Channel send failed: ' + r.error);
+          return;
+        }
+        if (j < msgs.length - 1) await sleep(humanPause(1000, 1900));
+      }
+
+      idx++;
+      const next = await patchJob({
+        tasSendIndex: idx,
+        progress: { stage: 'send', collected: idx, total: parts.length },
+        status: `TAS: sent ${idx.toLocaleString('en-US')}/${parts.length.toLocaleString('en-US')} to the channel`
+      });
+      if (!next) return;
+      job = next;
+      if (idx < parts.length) await sleep(humanPause(1000, 1900)); // ~1 сек между постами
+    }
+    await tasFinish(job);
+  }
+
+  // TAS-финал: итоговый лог → закрыть вкладку.
+  async function tasFinish(job) {
+    const linksCount = (job.tasLinks || []).length;
+    const parts = job.tasParts || [];
+    const summary = [
+      '✅ ScrXper TAS — complete',
+      `👤 Profile: @${job.handle}`,
+      `🔗 Verified links collected: ${linksCount.toLocaleString('en-US')}`,
+      `📨 Posts sent to the channel: ${parts.length.toLocaleString('en-US')}`,
+      `⏱ Time: ${fmtDuration(Math.round((Date.now() - job.startedAt) / 1000))}`
+    ].join('\n');
+    await sendLog(job, summary);
+    await sendRandomSticker(job); // 🎲 через 1 сек после последнего поста — случайный стикер в канал
+    await set({
+      job: null,
+      lastRun: {
+        status: 'done',
+        kind: 'tas',
+        handle: job.handle,
+        linksCount,
+        postsCount: parts.length,
+        durationMs: Date.now() - job.startedAt,
+        finishedAt: Date.now()
+      }
+    });
+    closeJobTab();
+  }
+
+  // Финал: единый HTML-отчёт → Telegram → закрыть вкладку.
+  async function finishReport(job) {
+    const following = job.users || [];
+    const followers = job.users2 || [];
+    const results = job.results || {};
+    const uniqueCount = new Set([...following, ...followers].map((u) => (u.handle || '').toLowerCase())).size;
+    const checkedCount = Object.keys(results).length;
+
+    await patchJob({ status: 'Building the report…', phase: 'report' });
+    const html = buildHtmlReport({
+      handle: job.handle,
+      following,
+      followers,
+      results,
+      version: VERSION
+    });
+
+    await patchJob({ status: 'Uploading the report to Telegram…' });
+    let res = await sendDocumentRetry(job, html, `scrxper_${job.handle}_report.html`,
+      `📊 ScrXper report @${job.handle} · ${uniqueCount.toLocaleString('en-US')} verified · follower counts`);
+    if (!res.ok) {
+      // запасной вариант: список частями в сообщениях (без дублей)
+      const seenH = new Set();
+      const deduped = [...following, ...followers].filter((u) => {
+        const k = (u.handle || '').toLowerCase();
+        if (!k || seenH.has(k)) return false;
+        seenH.add(k);
+        return true;
+      });
+      res = await sendChunkedMessages(job, deduped, 'Verified accounts');
+    }
+    if (!res.ok) {
+      // Ничего не доставилось — помечаем прогон ошибкой, а не успехом
+      await sendMessage(job, `❌ ScrXper: the report for @${job.handle} could not be sent to Telegram (${res.error}). Run the task again.`);
+      await set({
+        job: null,
+        lastRun: { status: 'error', error: 'Could not deliver the report: ' + res.error, finishedAt: Date.now() }
+      });
+      closeJobTab();
+      return;
+    }
+
+    const summary = [
+      '✅ ScrXper — parsing complete',
+      `👤 Profile: @${job.handle}`,
+      `🔵 Following (verified): ${following.length.toLocaleString('en-US')}`,
+      `🔵 Followers (verified): ${followers.length.toLocaleString('en-US')}`,
+      `🔀 Unique verified: ${uniqueCount.toLocaleString('en-US')}`,
+      `👥 Profiles checked: ${checkedCount.toLocaleString('en-US')}`,
+      `⏱ Time: ${fmtDuration(Math.round((Date.now() - job.startedAt) / 1000))}`
+    ].join('\n');
+    await sendMessage(job, summary);
+
+    await set({
+      job: null,
+      lastRun: {
+        status: 'done',
+        handle: job.handle,
+        followingCount: following.length,
+        followersCount: followers.length,
+        profilesChecked: checkedCount,
+        durationMs: Date.now() - job.startedAt,
+        finishedAt: Date.now()
+      }
+    });
+    closeJobTab();
+  }
+
+  async function sendChunkedMessages(job, users, label) {
+    const handles = users.map((u) => '@' + u.handle);
+    if (handles.length === 0) return sendMessage(job, `${label} @${job.handle}: list is empty`);
+    // Лимит Telegram — 4096 символов: режем по символам, а не по количеству.
+    const MAX_CHARS = 3500;
+    const chunks = [];
+    let cur = '';
+    for (const h of handles) {
+      if (cur && cur.length + h.length + 1 > MAX_CHARS) {
+        chunks.push(cur);
+        cur = h;
+      } else {
+        cur = cur ? cur + '\n' + h : h;
+      }
+    }
+    if (cur) chunks.push(cur);
+    const parts = chunks.length;
+    for (let i = 0; i < chunks.length; i++) {
+      const header = `${label} @${job.handle} — part ${i + 1}/${parts}\n\n`;
+      const r = await sendMessage(job, header + chunks[i]);
+      if (!r.ok) return r;
+    }
+    return { ok: true };
+  }
+
+  async function abort(job, errorText) {
+    await set({
+      job: null,
+      lastRun: { status: 'error', error: errorText, finishedAt: Date.now() }
+    });
+    closeJobTab();
+  }
+
+  function closeJobTab() {
+    try { chrome.runtime.sendMessage({ type: 'CLOSE_JOB_TAB' }); } catch (e) { /* ignore */ }
+    try { window.close(); } catch (e) { /* ignore */ }
+  }
+
+  /* ================= панель ================= */
+
+  function injectPanel() {
+    const uid = 'sx' + Math.random().toString(36).slice(2, 9);
+
+    const logo = `<svg class="logo-svg" viewBox="0 0 24 24" fill="none" stroke="url(#${uid}g)" stroke-width="1.8" stroke-linecap="round">
+      <defs>
+        <linearGradient id="${uid}g" x1="0" y1="0" x2="24" y2="24">
+          <stop offset="0" stop-color="#22d3ee"/>
+          <stop offset="1" stop-color="#a78bfa"/>
+        </linearGradient>
+      </defs>
+      <circle cx="12" cy="12" r="8.2"/>
+      <circle cx="12" cy="12" r="4.6"/>
+      <path d="M12 12 L19 5"/>
+      <circle cx="12" cy="12" r="1.5" fill="url(#${uid}g)" stroke="none"/>
+    </svg>`;
+
+    const css = `
+      :host { all: initial; }
+      * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; }
+      .wrap { width: 300px; background: linear-gradient(180deg, #161a20 0%, #0f1216 100%); border: 1px solid #2f3336; border-radius: 14px; box-shadow: 0 10px 34px rgba(0,0,0,.6); overflow: hidden; animation: pop .18s ease; position: relative; }
+      @keyframes pop { from { transform: scale(.93); opacity: 0; } to { transform: none; opacity: 1; } }
+      .hd { display: flex; align-items: center; gap: 10px; padding: 11px 12px; background: rgba(29,155,240,.07); border-bottom: 1px solid #2f3336; cursor: grab; user-select: none; }
+      .hd:active { cursor: grabbing; }
+      .logo { width: 32px; height: 32px; flex: 0 0 auto; }
+      .logo-svg { width: 100%; height: 100%; display: block; }
+      .titles { flex: 1; min-width: 0; }
+      .t { font-size: 15px; font-weight: 800; letter-spacing: .3px; background: linear-gradient(90deg, #22d3ee, #a78bfa); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+      .s { font-size: 10.5px; color: #8b98a5; margin-top: 1px; }
+      .icobtn { border: none; background: #1d2228; color: #8b98a5; width: 24px; height: 24px; border-radius: 7px; font-size: 14px; line-height: 1; cursor: pointer; transition: .15s; }
+      .icobtn:hover { background: #2a3038; color: #e7e9ea; }
+      .body { padding: 12px 13px 10px; position: relative; }
+      label { display: block; font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .7px; color: #8b98a5; margin: 11px 0 4px; }
+      label:first-child { margin-top: 0; }
+      .inp { width: 100%; background: #0c0f13; border: 1px solid #2f3336; border-radius: 8px; padding: 8px 10px; color: #e7e9ea; font-size: 13px; outline: none; transition: border .15s, box-shadow .15s; }
+      .inp:focus { border-color: #1d9bf0; box-shadow: 0 0 0 3px rgba(29,155,240,.22); }
+      .inp::placeholder { color: #566370; }
+      .hint { font-size: 10.5px; color: #6b7683; margin-top: 5px; line-height: 1.45; }
+      .hint b { color: #1d9bf0; }
+      .tabs { display: flex; border-bottom: 1px solid #2f3336; background: #13171d; }
+      .tab { flex: 1; border: none; background: none; color: #8b98a5; font-size: 12.5px; font-weight: 700; padding: 9px 8px 8px; cursor: pointer; border-bottom: 2px solid transparent; transition: color .15s, border-color .15s, background .15s; }
+      .tab:hover { color: #e7e9ea; background: rgba(29,155,240,.05); }
+      .tab.active { color: #fff; border-bottom-color: #1d9bf0; background: rgba(29,155,240,.09); }
+      .tas-note { font-size: 11px; line-height: 1.5; color: #b7c0ca; background: rgba(120,86,255,.1); border: 1px solid rgba(120,86,255,.35); border-radius: 8px; padding: 8px 10px; margin-bottom: 2px; }
+      .tas-note b { color: #c9d1ff; }
+      .btnrow { display: flex; gap: 7px; margin-top: 13px; }
+      .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: none; border-radius: 9px; padding: 9px 13px; font-size: 13px; font-weight: 600; cursor: pointer; color: #fff; transition: filter .15s, transform .05s, background .15s; }
+      .btn:active { transform: scale(.97); }
+      .btn-primary { flex: 1; background: linear-gradient(135deg, #1d9bf0, #7856ff); }
+      .btn-primary:hover { filter: brightness(1.15); }
+      .btn-ghost { background: #1d2228; border: 1px solid #2f3336; color: #e7e9ea; }
+      .btn-ghost:hover { background: #262c33; }
+      .btn-danger { background: #d33; }
+      .btn-danger:hover { filter: brightness(1.12); }
+      .progress-area { margin-top: 12px; background: #101419; border: 1px solid #2f3336; border-radius: 10px; padding: 10px 11px; }
+      .pline { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; color: #c9d1d9; }
+      .pline.small { font-size: 11px; color: #8b98a5; margin-top: 6px; }
+      .stage { font-weight: 700; }
+      .dot { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; flex: 0 0 auto; animation: pulse 1.2s ease-in-out infinite; }
+      @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+      .bar { height: 6px; background: #1d2228; border-radius: 99px; overflow: hidden; margin-top: 9px; }
+      .barfill { height: 100%; width: 42%; border-radius: 99px; background: linear-gradient(90deg, #1d9bf0, #a78bfa, #1d9bf0); background-size: 200% 100%; animation: slide 1.15s linear infinite; }
+      @keyframes slide { 0% { background-position: 0% 0; } 100% { background-position: -200% 0; } }
+      .toast { position: absolute; left: 10px; right: 10px; bottom: 8px; background: #10151b; border: 1px solid #33393f; border-radius: 10px; padding: 9px 11px; font-size: 11.5px; line-height: 1.45; color: #e7e9ea; opacity: 0; transform: translateY(8px); pointer-events: none; transition: opacity .25s, transform .25s; box-shadow: 0 8px 22px rgba(0,0,0,.55); z-index: 5; }
+      .toast.show { opacity: 1; transform: none; }
+      .ft { padding: 7px 13px 8px; font-size: 10px; color: #566370; border-top: 1px solid #23282e; background: rgba(0,0,0,.2); }
+      .fab { position: fixed; right: 16px; bottom: 16px; width: 46px; height: 46px; border-radius: 50%; border: 1px solid #2f3336; background: linear-gradient(180deg, #1a1f26, #101318); align-items: center; justify-content: center; cursor: pointer; box-shadow: 0 8px 24px rgba(0,0,0,.55); transition: transform .12s; padding: 9px; }
+      .fab:hover { transform: scale(1.07); }
+    `;
+
+    const html = `
+      <div class="wrap" id="${uid}wrap">
+        <div class="hd" id="${uid}hd">
+          <div class="logo">${logo}</div>
+          <div class="titles">
+            <div class="t">ScrXper</div>
+            <div class="s">X / Twitter parser</div>
+          </div>
+          <button class="icobtn" id="${uid}collapse" title="Collapse panel">−</button>
+        </div>
+        <div class="tabs">
+          <button class="tab active" id="${uid}tabp" type="button">📊 Parser</button>
+          <button class="tab" id="${uid}tabt" type="button">🤖 TAS</button>
+        </div>
+        <div class="body" id="${uid}bp">
+          <label for="${uid}p">Profile link</label>
+          <input id="${uid}p" class="inp" placeholder="https://x.com/elonmusk" autocomplete="off" spellcheck="false"/>
+
+          <label for="${uid}t">Telegram bot token</label>
+          <input id="${uid}t" class="inp" type="password" placeholder="123456789:AAH…" autocomplete="off" spellcheck="false"/>
+
+          <label for="${uid}c">Your Telegram ID</label>
+          <input id="${uid}c" class="inp" type="text" placeholder="123456789" autocomplete="off" spellcheck="false"/>
+          <div class="hint">Don't know your ID? Message <b>@userinfobot</b> in Telegram.</div>
+
+          <div class="btnrow">
+            <button class="btn btn-primary" id="${uid}start">🚀 Start</button>
+            <button class="btn btn-ghost" id="${uid}test" title="Send a test message to Telegram">🧪</button>
+            <button class="btn btn-danger" id="${uid}stop" style="display:none">⏹ Stop</button>
+          </div>
+        </div>
+        <div class="body" id="${uid}bt" style="display:none">
+          <div class="tas-note">Collect verified links → send them to <b>Grok</b> → post the ranked profiles to your channel.</div>
+          <label for="${uid}p2">Profile link</label>
+          <input id="${uid}p2" class="inp" placeholder="https://x.com/elonmusk" autocomplete="off" spellcheck="false"/>
+
+          <label for="${uid}ch">Telegram channel ID</label>
+          <input id="${uid}ch" class="inp" placeholder="-1001234567890 or @channel" autocomplete="off" spellcheck="false"/>
+          <div class="hint">Where the final posts go. <b>Add your bot as an admin</b> of the channel.</div>
+
+          <label for="${uid}t2">Telegram bot token</label>
+          <input id="${uid}t2" class="inp" type="password" placeholder="123456789:AAH…" autocomplete="off" spellcheck="false"/>
+
+          <label for="${uid}o">Your Telegram ID (logs, optional)</label>
+          <input id="${uid}o" class="inp" type="text" placeholder="123456789" autocomplete="off" spellcheck="false"/>
+          <div class="hint">Operational logs go here. If empty — logs go to the channel.</div>
+
+          <div class="btnrow">
+            <button class="btn btn-primary" id="${uid}tstart">🚀 Start TAS</button>
+            <button class="btn btn-danger" id="${uid}stop2" style="display:none">⏹ Stop</button>
+          </div>
+        </div>
+        <div class="progress-area" id="${uid}prog" style="display:none">
+          <div class="pline"><span class="stage" id="${uid}stage">Working…</span><span class="dot"></span></div>
+          <div class="bar"><div class="barfill"></div></div>
+          <div class="pline small"><span id="${uid}status">Starting…</span><span id="${uid}meta"></span></div>
+        </div>
+        <div class="toast" id="${uid}toast"></div>
+        <div class="ft">v${VERSION} · Parser + TAS</div>
+      </div>
+      <button class="fab" id="${uid}fab" title="ScrXper" style="display:none">${logo}</button>
+    `;
+
+    const hostEl = document.createElement('div');
+    hostEl.id = 'xq-host'; // нейтральный id: название расширения в DOM не светим
+    hostEl.style.cssText = 'all:initial; position:fixed; right:16px; bottom:16px; z-index:2147483647;';
+    const shadow = hostEl.attachShadow({ mode: 'open' });
+    shadow.innerHTML = `<style>${css}</style>${html}`;
+    (document.body || document.documentElement).appendChild(hostEl);
+
+    const $id = (i) => shadow.getElementById(i);
+    const wrap = $id(uid + 'wrap');
+    const fab = $id(uid + 'fab');
+    const hd = $id(uid + 'hd');
+    const tabP = $id(uid + 'tabp');
+    const tabT = $id(uid + 'tabt');
+    const bpEl = $id(uid + 'bp');
+    const btEl = $id(uid + 'bt');
+    const pInput = $id(uid + 'p');
+    const tInput = $id(uid + 't');
+    const cInput = $id(uid + 'c');
+    const startBtn = $id(uid + 'start');
+    const testBtn = $id(uid + 'test');
+    const stopBtn = $id(uid + 'stop');
+    const p2Input = $id(uid + 'p2');
+    const chInput = $id(uid + 'ch');
+    const t2Input = $id(uid + 't2');
+    const oInput = $id(uid + 'o');
+    const tstartBtn = $id(uid + 'tstart');
+    const stop2Btn = $id(uid + 'stop2');
+    const prog = $id(uid + 'prog');
+    const stageEl = $id(uid + 'stage');
+    const statusEl = $id(uid + 'status');
+    const metaEl = $id(uid + 'meta');
+    const toastEl = $id(uid + 'toast');
+
+    /* --- вкладки Parser / TAS --- */
+    function switchTab(which) {
+      const tas = which === 'tas';
+      bpEl.style.display = tas ? 'none' : '';
+      btEl.style.display = tas ? '' : 'none';
+      tabP.classList.toggle('active', !tas);
+      tabT.classList.toggle('active', tas);
+    }
+    tabP.addEventListener('click', () => switchTab('parser'));
+    tabT.addEventListener('click', () => switchTab('tas'));
+
+    /* --- сворачивание --- */
+    let collapsed = false;
+    function setCollapsed(c) {
+      collapsed = c;
+      wrap.style.display = c ? 'none' : '';
+      fab.style.display = c ? 'flex' : 'none';
+    }
+    $id(uid + 'collapse').addEventListener('click', (e) => { e.stopPropagation(); setCollapsed(true); });
+    fab.addEventListener('click', () => setCollapsed(false));
+
+    /* --- перетаскивание за шапку --- */
+    let drag = null;
+    hd.addEventListener('pointerdown', (e) => {
+      if (e.target.closest('button')) return;
+      drag = { dx: e.clientX, dy: e.clientY, left: hostEl.offsetLeft, top: hostEl.offsetTop };
+      hd.setPointerCapture(e.pointerId);
+    });
+    hd.addEventListener('pointermove', (e) => {
+      if (!drag) return;
+      const x = drag.left + (e.clientX - drag.dx);
+      const y = drag.top + (e.clientY - drag.dy);
+      hostEl.style.left = Math.max(4, Math.min(window.innerWidth - 330, x)) + 'px';
+      hostEl.style.top = Math.max(4, Math.min(window.innerHeight - 80, y)) + 'px';
+      hostEl.style.right = 'auto';
+      hostEl.style.bottom = 'auto';
+    });
+    hd.addEventListener('pointerup', () => { drag = null; });
+
+    /* --- сохранение настроек --- */
+    let saveTimer = null;
+    const saveConfig = () => {
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(() => {
+        set({ config: { handle: pInput.value, token: tInput.value, chatId: cInput.value } }).catch(() => {});
+      }, 400);
+    };
+    [pInput, tInput, cInput].forEach((el) => el.addEventListener('input', saveConfig));
+
+    let tasSaveTimer = null;
+    const saveTasConfig = () => {
+      clearTimeout(tasSaveTimer);
+      tasSaveTimer = setTimeout(() => {
+        set({ tasConfig: { handle: p2Input.value, channel: chInput.value, token: t2Input.value, owner: oInput.value } }).catch(() => {});
+      }, 400);
+    };
+    [p2Input, chInput, t2Input, oInput].forEach((el) => el.addEventListener('input', saveTasConfig));
+
+    /* --- тосты --- */
+    let toastTimer = null;
+    function toast(text, ms = 5200) {
+      toastEl.textContent = text;
+      toastEl.classList.add('show');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => toastEl.classList.remove('show'), ms);
+    }
+
+    /* --- отрисовка состояния --- */
+    let running = false;
+    function phaseLabel(p) {
+      switch (p) {
+        case 'following': return 'Step 1/3 · following';
+        case 'followers': return 'Step 2/3 · followers';
+        case 'enrich':    return 'Step 3/3 · follower counts';
+        case 'report':    return 'Sending report…';
+        case 'tas-following': return 'TAS · 1/2 · following';
+        case 'tas-followers': return 'TAS · 2/2 · followers';
+        case 'tas-grok':      return 'TAS · Grok is working…';
+        case 'tas-send':      return 'TAS · sending to channel';
+        default:          return 'Working…';
+      }
+    }
+    function renderJob(job) {
+      running = !!(job && job.active);
+      if (running) {
+        prog.style.display = 'block';
+        stageEl.textContent = phaseLabel(job.phase);
+        statusEl.textContent = job.status || 'Working…';
+        const pr = job.progress || {};
+        metaEl.textContent = pr.total
+          ? `${((pr.collected || 0)).toLocaleString('en-US')}/${(pr.total || 0).toLocaleString('en-US')}`
+          : (pr.collected ? pr.collected.toLocaleString('en-US') + ' acc.' : '');
+        startBtn.style.display = 'none';
+        tstartBtn.style.display = 'none';
+        stopBtn.style.display = 'inline-flex';
+        stop2Btn.style.display = 'inline-flex';
+      } else {
+        prog.style.display = 'none';
+        startBtn.style.display = 'inline-flex';
+        tstartBtn.style.display = 'inline-flex';
+        stopBtn.style.display = 'none';
+        stop2Btn.style.display = 'none';
+      }
+    }
+
+    function handleLastRun(lr, silent) {
+      if (!lr) return;
+      if (silent) return; // при первичной загрузке панели не спамим тостами
+      if (lr.status === 'done' && lr.kind === 'tas') {
+        toast(`✅ TAS done! @${lr.handle}: ${lr.postsCount} posts sent to the channel.`);
+      } else if (lr.status === 'done') {
+        const chk = lr.profilesChecked ? `, checked ${lr.profilesChecked}` : '';
+        toast(`✅ Done! @${lr.handle}: following ${lr.followingCount}, followers ${lr.followersCount}${chk}. Report is in Telegram.`);
+      } else if (lr.status === 'stopped') {
+        toast('⏹ Parsing stopped');
+      } else if (lr.status === 'error') {
+        toast('❌ ' + (lr.error || 'Error'));
+      }
+    }
+
+    /* --- запуск --- */
+    async function onStart() {
+      const { job: cur } = await get('job');
+      if (cur && cur.active) return toast('⏳ Parsing is already running — wait or press “Stop”');
+
+      const handle = normalizeHandle(pInput.value);
+      const token = tInput.value.trim();
+      const chatId = cInput.value.trim();
+
+      if (!handle) return toast('❌ Enter a profile link or username (e.g. elonmusk)');
+      if (!/^[A-Za-z0-9_]+$/.test(handle)) return toast('❌ Username may only contain Latin letters, digits and “_”');
+      if (!/^\d+:/.test(token)) return toast('❌ Bot token should look like “123456789:AAH…” — check the field');
+      if (!/^-?\d+$/.test(chatId)) return toast('❌ Telegram ID is a number (check with @userinfobot)');
+
+      const tabName = 'xw' + Math.random().toString(36).slice(2, 9);
+      const job = {
+        active: true,
+        handle,
+        token,
+        chatId,
+        tabName,          // случайное имя вкладки — window.name не палит расширение
+        phase: 'following',
+        status: 'Starting…',
+        startedAt: Date.now(),
+        updatedAt: Date.now(),
+        timeoutMs: BASE_TIMEOUT_MS,
+        progress: { stage: 'following', collected: 0 }
+      };
+      await set({ config: { handle, token, chatId }, job });
+
+      const s = await sendMessage(job, `🚀 ScrXper started parsing @${handle}: verified following + followers. Logs will arrive here.`);
+      if (!s.ok) {
+        // Telegram недоступен — парсить бессмысленно
+        await set({ job: null, lastRun: { status: 'error', error: 'Telegram is unreachable: ' + s.error, finishedAt: Date.now() } });
+        renderJob(null);
+        return toast('❌ Telegram is unreachable: ' + s.error);
+      }
+
+      renderJob(job);
+      const w = window.open(`https://x.com/${handle}/following`, tabName);
+      if (!w) {
+        // Окно заблокировано — не оставляем «зомби»-задачу
+        await set({ job: null, lastRun: { status: 'error', error: 'Browser blocked the window — allow popups for x.com and try again', finishedAt: Date.now() } });
+        renderJob(null);
+        return toast('⚠️ Browser blocked the window — allow popups for x.com and try again');
+      }
+      try { window.focus(); } catch (e) { /* ignore */ }
+    }
+
+    /* --- запуск TAS --- */
+    async function onTasStart() {
+      const { job: cur } = await get('job');
+      if (cur && cur.active) return toast('⏳ A task is already running — wait or press “Stop”');
+
+      const handle = normalizeHandle(p2Input.value);
+      const channel = chInput.value.trim();
+      const token = t2Input.value.trim();
+      const owner = oInput.value.trim();
+
+      if (!handle) return toast('❌ Enter a profile link or username (e.g. elonmusk)');
+      if (!/^[A-Za-z0-9_]+$/.test(handle)) return toast('❌ Username may only contain Latin letters, digits and “_”');
+      if (!/^-?\d+$/.test(channel) && !/^@[\w]+$/.test(channel)) return toast('❌ Channel ID should be a number (e.g. -100123…) or @username');
+      if (!/^\d+:/.test(token)) return toast('❌ Bot token should look like “123456789:AAH…” — check the field');
+      if (owner && !/^-?\d+$/.test(owner)) return toast('❌ Your Telegram ID is a number (check with @userinfobot)');
+
+      const logChatId = owner || channel;
+      const tabName = 'xw' + Math.random().toString(36).slice(2, 9);
+      const job = {
+        active: true,
+        kind: 'tas',
+        handle,
+        token,
+        chatId: channel,   // куда идут посты
+        logChatId,         // куда идут логи (владелец или канал)
+        tabName,
+        phase: 'tas-following',
+        status: 'TAS: starting…',
+        startedAt: Date.now(),
+        updatedAt: Date.now(),
+        timeoutMs: TAS_TIMEOUT_MS,
+        progress: { stage: 'following', collected: 0 }
+      };
+      await set({ tasConfig: { handle, channel, token, owner }, job });
+
+      const s = await sendLog(job, `🚀 ScrXper TAS started @${handle}: collecting verified links, then sending them through Grok to the channel.`);
+      if (!s.ok) {
+        await set({ job: null, lastRun: { status: 'error', error: 'Telegram is unreachable: ' + s.error, finishedAt: Date.now() } });
+        renderJob(null);
+        return toast('❌ Telegram is unreachable: ' + s.error);
+      }
+
+      renderJob(job);
+      const w = window.open(`https://x.com/${handle}/following`, tabName);
+      if (!w) {
+        await set({ job: null, lastRun: { status: 'error', error: 'Browser blocked the window — allow popups for x.com and try again', finishedAt: Date.now() } });
+        renderJob(null);
+        return toast('⚠️ Browser blocked the window — allow popups for x.com and try again');
+      }
+      try { window.focus(); } catch (e) { /* ignore */ }
+    }
+
+    startBtn.addEventListener('click', onStart);
+    [pInput, tInput, cInput].forEach((el) =>
+      el.addEventListener('keydown', (e) => { if (e.key === 'Enter') onStart(); })
+    );
+    tstartBtn.addEventListener('click', onTasStart);
+    [p2Input, chInput, t2Input, oInput].forEach((el) =>
+      el.addEventListener('keydown', (e) => { if (e.key === 'Enter') onTasStart(); })
+    );
+
+    /* --- стоп --- */
+    async function onStop() {
+      await set({ job: null, lastRun: { status: 'stopped', finishedAt: Date.now() } });
+      renderJob(null);
+      toast('⏹ Stopped');
+    }
+    stopBtn.addEventListener('click', onStop);
+    stop2Btn.addEventListener('click', onStop);
+
+    /* --- тест --- */
+    testBtn.addEventListener('click', async () => {
+      const token = tInput.value.trim();
+      const chatId = cInput.value.trim();
+      if (!token || !chatId) return toast('❌ Fill in the token and Telegram ID first');
+      const s = await tgSend({
+        action: 'message',
+        token,
+        chatId,
+        text: '🧪 ScrXper: test message. Everything works — start parsing!'
+      });
+      toast(s.ok ? '✅ Test sent to Telegram' : '❌ ' + s.error);
+    });
+
+    /* --- live-обновление из storage --- */
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (area !== 'local') return;
+      if (changes.job) renderJob(changes.job.newValue);
+      if (changes.lastRun) handleLastRun(changes.lastRun.newValue);
+    });
+
+    /* --- начальное состояние --- */
+    get(['config', 'tasConfig', 'job', 'lastRun']).then(({ config, tasConfig, job, lastRun }) => {
+      if (config) {
+        pInput.value = config.handle || '';
+        tInput.value = config.token || '';
+        cInput.value = config.chatId || '';
+      }
+      if (tasConfig) {
+        p2Input.value = tasConfig.handle || '';
+        chInput.value = tasConfig.channel || '';
+        t2Input.value = tasConfig.token || '';
+        oInput.value = tasConfig.owner || '';
+      }
+      renderJob(job || null);
+      if (lastRun) handleLastRun(lastRun, true);
+    }).catch(() => {});
+
+    /* --- сторож: если вкладка парсинга умерла, задача висит → сбрасываем --- */
+    // Порог 5 минут: загрузка большого отчёта в Telegram может идти без обновлений
+    // статуса дольше трёх минут, и сторож не должен сбрасывать живую задачу.
+    setInterval(async () => {
+      if (!running) return;
+      try {
+        const { job } = await get('job');
+        if (job && job.active && Date.now() - (job.updatedAt || 0) > 300000) {
+          await set({
+            job: null,
+            lastRun: { status: 'error', error: 'Parsing tab is not responding — task reset', finishedAt: Date.now() }
+          });
+          renderJob(null);
+          toast('⚠️ Task hung — reset. Start again.');
+        }
+      } catch (e) { /* ignore */ }
+    }, 20000);
+  }
+
+  /* ================= инициализация ================= */
+
+  (async () => {
+    // Вкладка-скрейпер определяется по совпадению window.name со случайным
+    // именем из активной задачи (окна открываются через window.open(url, name)).
+    const { job } = await get('job');
+    if (job && job.active && window.name && window.name === job.tabName) {
+      await maybeRunJob(); // вкладка-скрейпер: панель не нужна
+      return;
+    }
+    injectPanel();
+  })();
+})();
