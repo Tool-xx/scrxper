@@ -10,7 +10,7 @@
   if (window.__xenv) return;
   window.__xenv = true;
 
-  const VERSION = '1.9.0';
+  const VERSION = '1.9.2';
   const STAGE_TIMEOUT_MS = 25 * 60 * 1000;   // лимит на один список (с человеческим темпом)
   const BASE_TIMEOUT_MS = 30 * 60 * 1000;    // базовый лимит задачи
   const ENRICH_PER_USER_MS = 40 * 1000;      // бюджет на одного пользователя в enrich
@@ -2883,6 +2883,30 @@ ${TAS_LINKS_PLACEHOLDER}`;
       await sendLog(job, 'ℹ️ ScrXper TAS: the Grok answer does not contain {...} blocks — sending it as a single post.');
     }
 
+    // RAW-режим: из каждого {…}-блока берём только первую ссылку x.com,
+    // все ссылки уходят в канал одним сообщением. Если блоков нет — берём
+    // все ссылки из текста целиком.
+    if (job.rawResults) {
+      const links = [];
+      const seen = new Set();
+      const add = (l) => { if (!seen.has(l)) { seen.add(l); links.push(l); } };
+      if (splitBraces(text).length > 0) {
+        for (const b of parts) {
+          const m = b.match(/https:\/\/(?:x\.com|twitter\.com)\/[A-Za-z0-9_]+/);
+          if (m) add(m[0]);
+        }
+      } else {
+        for (const m of String(text).matchAll(/https:\/\/(?:x\.com|twitter\.com)\/[A-Za-z0-9_]+/g)) add(m[0]);
+      }
+      if (!links.length) {
+        await sendLog(job, '❌ ScrXper TAS: Raw results is on, but no x.com links were found in the Grok answer. Open x.com/i/grok and check the response.');
+        await abort(job, 'No links in Grok answer');
+        return;
+      }
+      parts = [links.join('\n')];
+      await sendLog(job, `ℹ️ ScrXper TAS: Raw results — ${links.length} link(s) extracted, sending as a single post.`);
+    }
+
     const next = await patchJob({
       phase: 'tas-send',
       tasParts: parts,
@@ -2939,11 +2963,14 @@ ${TAS_LINKS_PLACEHOLDER}`;
   async function tasFinish(job) {
     const linksCount = (job.tasLinks || []).length;
     const parts = job.tasParts || [];
+    const rawLinks = (job.rawResults && parts.length)
+      ? ' (' + parts[0].split('\n').filter((l) => l.trim()).length.toLocaleString('en-US') + ' links)'
+      : '';
     const summary = [
       '✅ ScrXper TAS — complete',
       `👤 Profile: @${job.handle}`,
       `🔗 Verified links collected: ${linksCount.toLocaleString('en-US')}`,
-      `📨 Posts sent to the channel: ${parts.length.toLocaleString('en-US')}`,
+      `📨 Posts sent to the channel: ${parts.length.toLocaleString('en-US')}${rawLinks}`,
       `⏱ Time: ${fmtDuration(Math.round((Date.now() - job.startedAt) / 1000))}`
     ].join('\n');
     await sendLog(job, summary);
@@ -3071,7 +3098,7 @@ ${TAS_LINKS_PLACEHOLDER}`;
 
   /* ================= панель ================= */
 
-  function injectPanel() {
+  function injectPanel(state) {
     const uid = 'sx' + Math.random().toString(36).slice(2, 9);
 
     const logo = `<svg class="logo-svg" viewBox="0 0 24 24" fill="none" stroke="url(#${uid}g)" stroke-width="1.8" stroke-linecap="round">
@@ -3209,6 +3236,7 @@ ${TAS_LINKS_PLACEHOLDER}`;
           <div class="hint">The account's own follower count — same syntax as the year field.</div>
 
           <label class="chk"><input type="checkbox" id="${uid}a2" checked/> Exclude affiliated (business / org) accounts</label>
+          <label class="chk"><input type="checkbox" id="${uid}r2"/> Raw results — only profile links, sent as one post</label>
 
           <label for="${uid}t2">Telegram bot token</label>
           <input id="${uid}t2" class="inp" type="password" placeholder="123456789:AAH…" autocomplete="off" spellcheck="false"/>
@@ -3238,6 +3266,14 @@ ${TAS_LINKS_PLACEHOLDER}`;
     hostEl.style.cssText = 'all:initial; position:fixed; right:16px; bottom:16px; z-index:2147483647;';
     const shadow = hostEl.attachShadow({ mode: 'open' });
     shadow.innerHTML = `<style>${css}</style>${html}`;
+    // Сохранённую позицию применяем ДО вставки в DOM — панель не «прыгает»
+    // при перезагрузке страницы, а сразу стоит там, где её оставили.
+    if (state && typeof state.left === 'number' && typeof state.top === 'number') {
+      hostEl.style.left = Math.max(4, Math.min(window.innerWidth - 330, state.left)) + 'px';
+      hostEl.style.top = Math.max(4, Math.min(window.innerHeight - 80, state.top)) + 'px';
+      hostEl.style.right = 'auto';
+      hostEl.style.bottom = 'auto';
+    }
     (document.body || document.documentElement).appendChild(hostEl);
 
     const $id = (i) => shadow.getElementById(i);
@@ -3264,6 +3300,7 @@ ${TAS_LINKS_PLACEHOLDER}`;
     const y2Input = $id(uid + 'y2');
     const f2Input = $id(uid + 'f2');
     const a2Check = $id(uid + 'a2');
+    const r2Check = $id(uid + 'r2');
     const updEl = $id(uid + 'upd');
     const updTxt = $id(uid + 'updtxt');
     const tstartBtn = $id(uid + 'tstart');
@@ -3285,17 +3322,38 @@ ${TAS_LINKS_PLACEHOLDER}`;
     tabP.addEventListener('click', () => switchTab('parser'));
     tabT.addEventListener('click', () => switchTab('tas'));
 
-    /* --- сворачивание --- */
-    let collapsed = false;
+    /* --- сворачивание (состояние сохраняется) --- */
+    let panelPos = null;
+    if (state && typeof state.left === 'number' && typeof state.top === 'number') {
+      panelPos = { left: state.left, top: state.top };
+    }
+    let collapsed = !!(state && state.collapsed);
+    // Кнопка-кружок появляется в точке панели, а не в углу экрана.
+    function placeFab(pos) {
+      if (pos) {
+        fab.style.left = Math.max(4, Math.min(window.innerWidth - 330, pos.left)) + 'px';
+        fab.style.top = Math.max(4, Math.min(window.innerHeight - 80, pos.top)) + 'px';
+        fab.style.right = 'auto';
+        fab.style.bottom = 'auto';
+      } else {
+        fab.style.left = 'auto';
+        fab.style.top = 'auto';
+        fab.style.right = '16px';
+        fab.style.bottom = '16px';
+      }
+    }
     function setCollapsed(c) {
       collapsed = c;
       wrap.style.display = c ? 'none' : '';
       fab.style.display = c ? 'flex' : 'none';
+      if (c) placeFab(panelPos);
+      set({ sxPanel: { left: panelPos ? panelPos.left : null, top: panelPos ? panelPos.top : null, collapsed: c } }).catch(() => {});
     }
     $id(uid + 'collapse').addEventListener('click', (e) => { e.stopPropagation(); setCollapsed(true); });
     fab.addEventListener('click', () => setCollapsed(false));
+    if (collapsed) setCollapsed(true);
 
-    /* --- перетаскивание за шапку --- */
+    /* --- перетаскивание за шапку (позиция сохраняется) --- */
     let drag = null;
     hd.addEventListener('pointerdown', (e) => {
       if (e.target.closest('button')) return;
@@ -3311,7 +3369,12 @@ ${TAS_LINKS_PLACEHOLDER}`;
       hostEl.style.right = 'auto';
       hostEl.style.bottom = 'auto';
     });
-    hd.addEventListener('pointerup', () => { drag = null; });
+    hd.addEventListener('pointerup', () => {
+      if (!drag) return;
+      drag = null;
+      panelPos = { left: hostEl.offsetLeft, top: hostEl.offsetTop };
+      set({ sxPanel: { left: panelPos.left, top: panelPos.top, collapsed } }).catch(() => {});
+    });
 
     /* --- сохранение настроек --- */
     let saveTimer = null;
@@ -3327,10 +3390,10 @@ ${TAS_LINKS_PLACEHOLDER}`;
     const saveTasConfig = () => {
       clearTimeout(tasSaveTimer);
       tasSaveTimer = setTimeout(() => {
-        set({ tasConfig: { handle: p2Input.value, channel: chInput.value, token: t2Input.value, owner: oInput.value, year: y2Input.value, followers: f2Input.value, noAff: a2Check.checked } }).catch(() => {});
+        set({ tasConfig: { handle: p2Input.value, channel: chInput.value, token: t2Input.value, owner: oInput.value, year: y2Input.value, followers: f2Input.value, noAff: a2Check.checked, raw: r2Check.checked } }).catch(() => {});
       }, 400);
     };
-    [p2Input, chInput, t2Input, oInput, y2Input, f2Input, a2Check].forEach((el) => el.addEventListener('input', saveTasConfig));
+    [p2Input, chInput, t2Input, oInput, y2Input, f2Input, a2Check, r2Check].forEach((el) => el.addEventListener('input', saveTasConfig));
 
     /* --- тосты --- */
     let toastTimer = null;
@@ -3450,7 +3513,7 @@ ${TAS_LINKS_PLACEHOLDER}`;
         timeoutMs: BASE_TIMEOUT_MS,
         progress: { stage: 'following', collected: 0 }
       };
-      await set({ config: { handle, token, chatId }, job });
+      await set({ config: { handle, token, chatId, year: yearFilter, followers: followersFilter, noAff: aCheck.checked }, job });
 
       const s = await sendMessage(job, `🚀 ScrXper started parsing @${handle}: verified following + followers. Logs will arrive here.`);
       if (!s.ok) {
@@ -3506,6 +3569,7 @@ ${TAS_LINKS_PLACEHOLDER}`;
         year: yearFilter,
         followers: followersFilter,
         noAff: a2Check.checked,
+        rawResults: r2Check.checked,
         tabName,
         phase: 'tas-following',
         status: 'TAS: starting…',
@@ -3514,7 +3578,7 @@ ${TAS_LINKS_PLACEHOLDER}`;
         timeoutMs: TAS_TIMEOUT_MS,
         progress: { stage: 'following', collected: 0 }
       };
-      await set({ tasConfig: { handle, channel, token, owner }, job });
+      await set({ tasConfig: { handle, channel, token, owner, year: yearFilter, followers: followersFilter, noAff: a2Check.checked, raw: r2Check.checked }, job });
 
       const s = await sendLog(job, `🚀 ScrXper TAS started @${handle}: collecting verified links, then sending them through Grok to the channel.`);
       if (!s.ok) {
@@ -3591,6 +3655,7 @@ ${TAS_LINKS_PLACEHOLDER}`;
         y2Input.value = tasConfig.year || '';
         f2Input.value = tasConfig.followers || '';
         a2Check.checked = tasConfig.noAff !== false;
+        r2Check.checked = tasConfig.raw === true;
       }
       renderJob(job || null);
       if (lastRun) handleLastRun(lastRun, true);
@@ -3627,11 +3692,11 @@ ${TAS_LINKS_PLACEHOLDER}`;
   (async () => {
     // Вкладка-скрейпер определяется по совпадению window.name со случайным
     // именем из активной задачи (окна открываются через window.open(url, name)).
-    const { job } = await get('job');
+    const { job, sxPanel } = await get(['job', 'sxPanel']);
     if (job && job.active && window.name && window.name === job.tabName) {
       await maybeRunJob(); // вкладка-скрейпер: панель не нужна
       return;
     }
-    injectPanel();
+    injectPanel(sxPanel || null); // сохранённая позиция/свёрнутость панели
   })();
 })();

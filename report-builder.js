@@ -75,7 +75,7 @@ function buildHtmlReport(opts) {
   const following = opts.following || [];
   const followers = opts.followers || [];
   const results = opts.results || {};
-  const version = opts.version || '1.9.0';
+  const version = opts.version || '1.9.2';
   const uniqueCount = new Set([...following, ...followers].map((u) => (u.handle || '').toLowerCase())).size;
   const generatedAt = new Date().toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' });
 

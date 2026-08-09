@@ -124,7 +124,7 @@ The second tab of the panel (**🤖 TAS**) runs a fully automated pipeline:
 2. **Send to Grok** — the tab opens `https://x.com/i/grok`, pastes a built-in **OSINT research prompt** with the collected links (comma-separated), and presses the send button.
 3. **Wait for the answer** — the extension watches for the action row (Like / Copy) of the *new* Grok message. While waiting, the panel shows live progress ("Grok is thinking… 45s").
 4. **Copy the answer** — it clicks **Copy text** and captures the copied text. To read the clipboard it uses a small hook inside the page (see `main-world.js`) — nothing extra to install.
-5. **Split & post** — the answer is split into **`{...}` blocks** (one person per block, braces removed), and each block is sent to your **Telegram channel** as a separate message, one per ~1 second.
+5. **Split & post** — the answer is split into **`{...}` blocks** (one person per block, braces removed), and each block is sent to your **Telegram channel** as a separate message, one per ~1 second. With **Raw results** on, only the first `https://x.com/...` link of each block is kept and all links go to the channel as **one message**.
 6. **Sticker** — about **1 second after the last post**, a **random sticker** from `t.me/addstickers/CrazyEvilBro` is sent to the channel.
 
 The built-in OSINT prompt (**X / Twitter OSINT — Deep Profile & Candidate Filter**) is fully embedded: it filters the collected accounts by 11 criteria (popularity, financial success, crypto involvement, career quality, personality, social activity, network, uniqueness, information density, current activity, signal-to-noise), builds a detailed public-source profile for every selected person, and produces the final answer **entirely in Russian** with the same level of detail and the same `{...}` output format.
@@ -140,6 +140,7 @@ The built-in OSINT prompt (**X / Twitter OSINT — Deep Profile & Candidate Filt
 | **Account created (year)** | `2020+` | Only accounts created in the matching years (same syntax as the Parser tab). |
 | **Followers filter** | `1000+` | Only accounts with a matching follower count (same syntax as the Parser tab). |
 | **Exclude affiliated** | ☑ on | Drops accounts with a business / organization label. |
+| **Raw results** | ☐ off | When on, only the first `https://x.com/...` link of each `{...}` block is extracted (deduplicated) and all links are sent to the channel as a **single message** — no full profiles. |
 
 ### TAS notes & limits
 
