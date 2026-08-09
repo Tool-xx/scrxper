@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      width: 270px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+      background: #0f1216;
+      color: #e7e9ea;
+      padding: 14px;
+    }
+    .head { display: flex; align-items: center; gap: 9px; margin-bottom: 10px; }
+    .logo { font-size: 22px; }
+    .name {
+      font-size: 15px; font-weight: 800;
+      background: linear-gradient(90deg, #22d3ee, #a78bfa);
+      -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+    }
+    .desc { font-size: 11px; color: #8b98a5; margin-bottom: 12px; }
+    .status {
+      font-size: 12px; line-height: 1.5; color: #c9d1d9;
+      background: #101419; border: 1px solid #2f3336; border-radius: 9px;
+      padding: 9px 10px; margin-bottom: 12px; min-height: 36px;
+    }
+    .upd {
+      font-size: 11.5px; line-height: 1.5; color: #aee7f5;
+      background: #0d1a20; border: 1px solid #14617a; border-radius: 9px;
+      padding: 9px 10px; margin-bottom: 12px;
+    }
+    .upd .row { display: flex; align-items: center; gap: 8px; }
+    .upd .txt { flex: 1; min-width: 0; }
+    .upd button {
+      margin: 0; padding: 6px 10px; font-size: 11.5px; width: auto;
+      background: linear-gradient(135deg, #1d9bf0, #7856ff);
+    }
+    button {
+      display: block; width: 100%; border: none; border-radius: 9px;
+      padding: 9px 12px; font-size: 13px; font-weight: 600; color: #fff;
+      cursor: pointer; margin-top: 7px; transition: filter .15s;
+    }
+    button:hover { filter: brightness(1.15); }
+    .primary { background: linear-gradient(135deg, #1d9bf0, #7856ff); }
+    .danger { background: #d33; }
+  </style>
+</head>
+<body>
+  <div class="head">
+    <div class="logo">📡</div>
+    <div class="name">ScrXper</div>
+  </div>
+  <div class="desc">X / Twitter scraper → Telegram · Parser + TAS (Grok)</div>
+  <div class="upd" id="upd" hidden>
+    <div class="row">
+      <span class="txt" id="updtxt"></span>
+      <button id="updbtn" type="button">⬇ Download</button>
+    </div>
+  </div>
+  <div class="status" id="status">Loading…</div>
+  <button class="primary" id="open">Open X</button>
+  <button class="danger" id="stop" hidden>⏹ Stop parsing</button>
+  <script src="popup.js"></script>
+</body>
+</html>
