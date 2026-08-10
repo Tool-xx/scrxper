@@ -1,6 +1,9 @@
 # 📡 ScrXper — X / Twitter scraper → Telegram
 
 > 🌐 **Website (guide, how it works, download):** <https://tool-xx.github.io/scrxper/>
+> ▶ **Видео-инструкция (анимированный ролик):** <https://tool-xx.github.io/scrxper/demo.html>
+
+> 🌐 **The UI is fully bilingual (Русский / English):** the extension panel (with a small **RU/EN** toggle), the popup, all Telegram logs and the HTML report follow the chosen language; the website has a language switcher in the header.
 
 A browser extension (Chrome / Edge, Manifest V3) that pins a **control panel** right onto the x.com page and, on one click of **Start**, **quietly** collects **verified accounts** from:
 

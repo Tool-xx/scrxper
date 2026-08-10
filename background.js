@@ -188,11 +188,16 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
     job: null,
     lastRun: { status: 'stopped', error: 'Tab closed manually', finishedAt: Date.now() }
   });
+  // Язык уведомления — как у пользователя в панели (ru/en).
+  let isRu = true;
+  try { const { lang } = await chrome.storage.local.get('lang'); isRu = lang !== 'en'; } catch (e) { /* ignore */ }
   tgFetch({
     action: 'message',
     token: job.token,
     chatId: job.chatId,
-    text: `⚠️ ScrXper: parsing @${job.handle} was interrupted — the parsing tab was closed manually.`
+    text: isRu
+      ? `⚠️ ScrXper: парсинг @${job.handle} прерван — вкладка парсинга была закрыта вручную.`
+      : `⚠️ ScrXper: parsing @${job.handle} was interrupted — the parsing tab was closed manually.`
   }).catch(() => {});
 });
 

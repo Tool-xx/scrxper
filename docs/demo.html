@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ScrXper — видео-инструкция</title>
+<meta name="description" content="Анимированная видео-инструкция по расширению ScrXper: установка, Telegram, парсинг, фильтры, TAS (Grok). Режим ?loop — зацикленный ролик без контролов.">
+<meta property="og:title" content="ScrXper — видео-инструкция">
+<meta property="og:description" content="Анимированная видео-инструкция: установка, Telegram, парсинг, фильтры, TAS (Grok).">
+<meta property="og:image" content="https://raw.githubusercontent.com/Tool-xx/scrxper/main/icons/icon128.png">
+<link rel="canonical" href="https://tool-xx.github.io/scrxper/demo.html">
+<link rel="stylesheet" href="demo.css?v=20260810">
+</head>
+<body>
+
+<div class="topline">
+  <div class="brand">SCRXPER <b>▸</b> видео-инструкция</div>
+  <div class="links">
+    <a href="index.html">⌂ сайт</a>
+    <a href="https://github.com/Tool-xx/scrxper" target="_blank" rel="noopener">github</a>
+    <a href="https://raw.githubusercontent.com/Tool-xx/scrxper/main/INSTRUCTIONS.md" target="_blank" rel="noopener">инструкция</a>
+  </div>
+</div>
+
+<div class="player">
+  <div class="stage" id="stage"></div>
+  <div class="controls">
+    <button class="cbtn2" id="btnPrev" type="button" title="Назад (←)">⏮</button>
+    <button class="cbtn2 play" id="btnPlay" type="button" title="Пауза / воспроизведение (пробел)">⏸</button>
+    <button class="cbtn2" id="btnNext" type="button" title="Вперёд (→)">⏭</button>
+    <div class="barwrap" id="barwrap" role="slider" aria-label="Перемотка видео" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+      <div class="track"><div class="fill" id="fill"></div></div>
+      <div class="marks" id="marks"></div>
+    </div>
+    <div class="scenetitle"><b id="sceneNum"></b>&nbsp;<span id="sceneName"></span></div>
+    <div class="time" id="time">0:00 / 1:24</div>
+  </div>
+</div>
+
+<script src="demo.js?v=20260810"></script>
+</body>
+</html>

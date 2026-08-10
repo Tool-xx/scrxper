@@ -5,173 +5,196 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ScrXper — X / Twitter парсер</title>
   <meta name="description" content="ScrXper — расширение для браузера: собирает верифицированные аккаунты, строит HTML-отчёты, отправляет в Telegram.">
+
+  <!-- SEO / соцсети -->
+  <meta property="og:title" content="ScrXper — X / Twitter парсер">
+  <meta property="og:description" content="Собирает верифицированные аккаунты, строит HTML-отчёты, отправляет в Telegram. Установка, инструкция, скачивание.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://tool-xx.github.io/scrxper/">
+  <meta property="og:image" content="https://raw.githubusercontent.com/Tool-xx/scrxper/main/icons/icon128.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="ScrXper — X / Twitter парсер">
+  <meta name="twitter:description" content="Собирает верифицированные аккаунты, строит HTML-отчёты, отправляет в Telegram.">
+  <meta name="twitter:image" content="https://raw.githubusercontent.com/Tool-xx/scrxper/main/icons/icon128.png">
+  <link rel="canonical" href="https://tool-xx.github.io/scrxper/">
   <link rel="icon" type="image/png" href="https://raw.githubusercontent.com/Tool-xx/scrxper/main/icons/icon48.png">
-  <link rel="stylesheet" href="style.css">
+
+  <link rel="stylesheet" href="style.css?v=20260810">
 </head>
 <body>
 
+  <a class="skip" href="#main" data-i18n="skip">Перейти к содержанию</a>
+
   <pre class="header">
-SCRXPER  v1.9.2  X / TWITTER ПАРСЕР
-<a href="#features">возможности</a> &middot; <a href="#how">как работает</a> &middot; <a href="#install">установка</a> &middot; <a href="#files">скачать</a> &middot; <a href="#faq">faq</a>
+SCRXPER  v1.9.4  X / TWITTER PARSER
+<a href="#video" data-i18n="navVideo">видео</a> &middot; <a href="#features" data-i18n="navFeatures">возможности</a> &middot; <a href="#how" data-i18n="navHow">как работает</a> &middot; <a href="#install" data-i18n="navInstall">установка</a> &middot; <a href="#files" data-i18n="navFiles">скачать</a> &middot; <a href="#faq" data-i18n="navFaq">faq</a> &middot; <a href="#" id="langToggle">[EN]</a>
   </pre>
 
-  <main class="wrap">
+  <main class="wrap" id="main">
 
-    <pre class="logo">
+    <div class="logo-wrap">
+      <pre class="logo">
  ___  _  _ ___      ___ _   _  _ ___
 / _ \| \| | __|___ / __| | | |/ | __|
 | (_) | .` | _|___\__ \ |_| | ' <| _|
- \___/|_|\_|___|  |___/\___/|_|\_\___|
-    </pre>
+ \___/|_|\_|___|  |___/\___/|_|\_\_\_|
+      </pre>
+    </div>
 
-    <p class="tagline">
+    <p class="tagline" data-i18n-html="tagline">
       Расширение для <b>Chrome / Edge</b> (Manifest V3, 111+).<br>
       Собирает верифицированные подписки и подписчиков из X (Twitter),<br>
       читает количество подписчиков, строит HTML-отчёт и отправляет в Telegram.
     </p>
 
     <p class="actions">
-      <button id="btnDownloadZip" class="btn">[скачать .zip]</button>
-      <a class="btn" href="#files">[скачать файлы]</a>
-      <a class="btn" href="https://github.com/Tool-xx/scrxper" target="_blank" rel="noopener">[github]</a>
+      <button type="button" id="btnDownloadZip" class="btn" data-i18n="btnZip">[скачать .zip]</button>
+      <a class="btn" href="#files" data-i18n="btnFiles">[скачать файлы]</a>
+      <a class="btn" href="https://github.com/Tool-xx/scrxper" target="_blank" rel="noopener" data-i18n="btnGithub">[github]</a>
+      <a class="btn btn-big" href="#video" data-i18n="btnVideo">[▶ видео-инструкция]</a>
     </p>
-    <p id="dlStatus" class="dim">Файлы скачиваются напрямую из репозитория GitHub.</p>
+    <p id="dlStatus" class="dim" data-i18n="dlStatus">Файлы скачиваются напрямую из репозитория GitHub.</p>
+
+    <!-- ===== ВИДЕО ===== -->
+    <section id="video">
+      <h2 data-i18n="videoTitle">== ВИДЕО-ИНСТРУКЦИЯ ==</h2>
+      <p class="dim" data-i18n="videoDesc">7 анимированных сцен: установка, Telegram, парсинг, фильтры, TAS (Grok), обновления. Проигрывается автоматически, по кругу.</p>
+      <div class="video-box">
+        <iframe class="video-frame" id="videoFrame" src="demo.html?loop&lang=ru" title="ScrXper — видео-инструкция" loading="lazy"></iframe>
+        <button type="button" class="btn video-expand" id="videoExpand" aria-expanded="false" data-i18n="videoExpand">[развернуть]</button>
+      </div>
+      <p class="dim" data-i18n-html="videoMore">Хотите управлять воспроизведением (пауза, перемотка, сцены) — откройте <a href="demo.html">полный плеер</a>.</p>
+    </section>
 
     <!-- ===== ВОЗМОЖНОСТИ ===== -->
     <section id="features">
-      <h2>== ВОЗМОЖНОСТИ ==</h2>
+      <h2 data-i18n="featuresTitle">== ВОЗМОЖНОСТИ ==</h2>
       <ul>
-        <li><b>Только с галочкой</b> — собираются исключительно верифицированные аккаунты</li>
-        <li><b>Год создания и число подписчиков</b> — приходят сразу с API (те же запросы, что делает сам x.com), без обхода профилей</li>
-        <li><b>Фильтры</b> — год создания (2020+ / 2020- / 2020-2022 / 2020), число подписчиков (та же синтаксис) и исключение аффилированных (бизнес/организации) аккаунтов — в обоих режимах</li>
-        <li><b>Один HTML-отчёт</b> — тёмная тема, статистика, таблицы Подписки/Подписчики, фильтр, кнопка копирования</li>
-        <li><b>Тихий режим</b> — парсинг идёт в фоновой вкладке, которая закрывается сама</li>
-        <li><b>Человеческое поведение</b> — те же GraphQL-запросы, что у веб-приложения, случайные паузы, без бот-маркеров и следов расширения</li>
-        <li><b>Авто-обновление</b> — раз в час тихо сверяет версию с репозиторием; при выходе новой версии показывает плашку с кнопкой скачивания</li>
-        <li><b>TAS-режим (Grok)</b> — список верифицированных → OSINT-промт в Grok → посты в канал + случайный стикер</li>
-        <li><b>Обработка ошибок</b> — логин-воллы, приватные профили, rate-limit, переименованные аккаунты, автоповторы</li>
+        <li data-i18n-html="f1"><b>Только с галочкой</b> — собираются исключительно верифицированные аккаунты</li>
+        <li data-i18n-html="f2"><b>Год создания и число подписчиков</b> — приходят сразу с API (те же запросы, что делает сам x.com), без обхода профилей</li>
+        <li data-i18n-html="f3"><b>Фильтры</b> — год создания (2020+ / 2020- / 2020-2022 / 2020), число подписчиков (та же синтаксис) и исключение аффилированных (бизнес/организации) аккаунтов — в обоих режимах</li>
+        <li data-i18n-html="f4"><b>Один HTML-отчёт</b> — тёмная тема, статистика, таблицы Подписки/Подписчики, фильтр, кнопка копирования</li>
+        <li data-i18n-html="f5"><b>Тихий режим</b> — парсинг идёт в фоновой вкладке, которая закрывается сама</li>
+        <li data-i18n-html="f6"><b>Человеческое поведение</b> — те же GraphQL-запросы, что у веб-приложения, случайные паузы, без бот-маркеров и следов расширения</li>
+        <li data-i18n-html="f7"><b>Авто-обновление</b> — раз в час тихо сверяет версию с репозиторием; при выходе новой версии показывает плашку с кнопкой скачивания</li>
+        <li data-i18n-html="f8"><b>TAS-режим (Grok)</b> — список верифицированных → OSINT-промт в Grok → посты в канал + случайный стикер</li>
+        <li data-i18n-html="f9"><b>Обработка ошибок</b> — логин-воллы, приватные профили, rate-limit, переименованные аккаунты, автоповторы</li>
       </ul>
     </section>
 
     <!-- ===== КАК РАБОТАЕТ ===== -->
     <section id="how">
-      <h2>== КАК РАБОТАЕТ ==</h2>
-      <h3>[1] Обычный парсинг</h3>
+      <h2 data-i18n="howTitle">== КАК РАБОТАЕТ ==</h2>
+      <h3 data-i18n="howP1Title">[1] Обычный парсинг</h3>
       <ol>
-        <li>Вводите ссылку на профиль, токен бота, свой Telegram ID и (по желанию) фильтры: год создания, число подписчиков, исключение аффилированных.</li>
-        <li>Расширение открывает фоновую вкладку и собирает x.com/&lt;профиль&gt;/following и /followers через те же GraphQL-операции, что и само приложение.</li>
-        <li>Собираются только <b>верифицированные</b> аккаунты, прошедшие фильтры: имя, @username, галочка, био, год создания, число подписчиков.</li>
-        <li>Если API-путь недоступен — автоматический фолбэк на скролл DOM.</li>
-        <li>Собирается <b>один общий HTML-отчёт</b> и отправляется в Telegram.</li>
-        <li>Фоновая вкладка закрывается сама.</li>
+        <li data-i18n="howP1_1">Вводите ссылку на профиль, токен бота, свой Telegram ID и (по желанию) фильтры: год создания, число подписчиков, исключение аффилированных.</li>
+        <li data-i18n="howP1_2">Расширение открывает фоновую вкладку и собирает x.com/&lt;профиль&gt;/following и /followers через те же GraphQL-операции, что и само приложение.</li>
+        <li data-i18n-html="howP1_3">Собираются только <b>верифицированные</b> аккаунты, прошедшие фильтры: имя, @username, галочка, био, год создания, число подписчиков.</li>
+        <li data-i18n="howP1_4">Если API-путь недоступен — автоматический фолбэк на скролл DOM.</li>
+        <li data-i18n-html="howP1_5">Собирается <b>один общий HTML-отчёт</b> и отправляется в Telegram.</li>
+        <li data-i18n="howP1_6">Фоновая вкладка закрывается сама.</li>
       </ol>
 
-      <h3>[2] TAS-режим (Grok → канал)</h3>
+      <h3 data-i18n="howP2Title">[2] TAS-режим (Grok → канал)</h3>
       <ol>
-        <li>Вводите профиль, ID канала и токен бота.</li>
-        <li>Расширение собирает <b>только ссылки</b> верифицированных аккаунтов (без био и подписчиков).</li>
-        <li>Открывает x.com/i/grok и вставляет встроенный <b>OSINT-промт</b> со ссылками через запятую.</li>
-        <li>Ждёт ответ Grok, нажимает «Copy text», захватывает текст через хук буфера обмена.</li>
-        <li>Ответ делится на блоки <code>{...}</code> — каждый человек отдельным постом в канал (~1 сек).</li>
-        <li>Через секунду после последнего поста отправляется <b>случайный стикер</b> из пака CrazyEvilBro.</li>
+        <li data-i18n="howP2_1">Вводите профиль, ID канала и токен бота.</li>
+        <li data-i18n-html="howP2_2">Расширение собирает <b>только ссылки</b> верифицированных аккаунтов (без био и подписчиков).</li>
+        <li data-i18n-html="howP2_3">Открывает x.com/i/grok и вставляет встроенный <b>OSINT-промт</b> со ссылками через запятую.</li>
+        <li data-i18n="howP2_4">Ждёт ответ Grok, нажимает «Copy text», захватывает текст через хук буфера обмена.</li>
+        <li data-i18n-html="howP2_5">Ответ делится на блоки <code>{...}</code> — каждый человек отдельным постом в канал (~1 сек).</li>
+        <li data-i18n-html="howP2_6">Через секунду после последнего поста отправляется <b>случайный стикер</b> из пака CrazyEvilBro.</li>
       </ol>
 
-      <p class="dim">Весь вывод Grok — на русском языке. Промт фильтрует по 11 критериям (популярность,
-      финансы, крипто, карьера, личность, соц. активность, сеть, уникальность, информационная
-      плотность, текущая активность, сигнал/шум) и строит подробные профили с анти-галлюцинационными метками.</p>
+      <p class="dim" data-i18n="howNote">Весь вывод Grok — на русском языке. Промт фильтрует по 11 критериям (популярность, финансы, крипто, карьера, личность, соц. активность, сеть, уникальность, информационная плотность, текущая активность, сигнал/шум) и строит подробные профили с анти-галлюцинационными метками.</p>
     </section>
 
     <!-- ===== УСТАНОВКА ===== -->
     <section id="install">
-      <h2>== УСТАНОВКА ==</h2>
+      <h2 data-i18n="installTitle">== УСТАНОВКА ==</h2>
       <ol>
-        <li><b>Скачайте</b> расширение — нажмите [скачать .zip] и распакуйте в постоянную папку.
-            В папке обязательно должен быть файл <code>manifest.json</code>.</li>
-        <li><b>Загрузите в браузер</b> — откройте <code>chrome://extensions</code> (или <code>edge://extensions</code>),
-            включите <b>Developer mode</b>, нажмите <b>Load unpacked</b> и выберите папку.</li>
-        <li><b>Создайте Telegram-бота</b> — в <a href="https://t.me/BotFather" target="_blank">@BotFather</a>
-            выполните <code>/newbot</code> и получите токен вида <code>123456789:AAH...</code>.
-            Узнайте свой Telegram ID через <a href="https://t.me/userinfobot" target="_blank">@userinfobot</a>
-            и <b>напишите боту /start</b> (бот не сможет писать первым).</li>
-        <li><b>Запустите</b> — откройте x.com, войдите в аккаунт, внизу справа появится панель ScrXper.
-            Введите данные и нажмите <b>Start</b> (или <b>Test</b> для проверки бота/токена).</li>
+        <li data-i18n-html="install_1"><b>Скачайте</b> расширение — нажмите [скачать .zip] и распакуйте в постоянную папку. В папке обязательно должен быть файл <code>manifest.json</code>.</li>
+        <li data-i18n-html="install_2"><b>Загрузите в браузер</b> — откройте <code>chrome://extensions</code> (или <code>edge://extensions</code>), включите <b>Developer mode</b>, нажмите <b>Load unpacked</b> и выберите папку.</li>
+        <li data-i18n-html="install_3"><b>Создайте Telegram-бота</b> — в <a href="https://t.me/BotFather" target="_blank" rel="noopener">@BotFather</a> выполните <code>/newbot</code> и получите токен вида <code>123456789:AAH...</code>. Узнайте свой Telegram ID через <a href="https://t.me/userinfobot" target="_blank" rel="noopener">@userinfobot</a> и <b>напишите боту /start</b> (бот не сможет писать первым).</li>
+        <li data-i18n-html="install_4"><b>Запустите</b> — откройте x.com, войдите в аккаунт, внизу справа появится панель ScrXper. Введите данные и нажмите <b>Start</b> (или <b>Test</b> для проверки бота/токена).</li>
       </ol>
-      <p class="dim">Полное руководство: <a href="https://raw.githubusercontent.com/Tool-xx/scrxper/main/INSTRUCTIONS.md" target="_blank">INSTRUCTIONS.md</a></p>
+      <p class="dim" data-i18n-html="installMore">Полное руководство: <a href="https://raw.githubusercontent.com/Tool-xx/scrxper/main/INSTRUCTIONS.md" target="_blank" rel="noopener">INSTRUCTIONS.md</a></p>
     </section>
 
     <!-- ===== СКАЧАТЬ ===== -->
     <section id="files">
-      <h2>== СКАЧАТЬ ==</h2>
-      <p>Файлы из <code>github.com/Tool-xx/scrxper</code> (ветка <code>main</code>), версия <b>1.9.2</b>.</p>
+      <h2 data-i18n="filesTitle">== СКАЧАТЬ ==</h2>
+      <p data-i18n="filesDesc" data-i18n-args='{"v":"1.9.4"}'>Файлы из <code>github.com/Tool-xx/scrxper</code> (ветка <code>main</code>), версия <b>1.9.4</b>.</p>
 
-      <button id="btnDownloadZip2" class="btn btn-big">[скачать всё — .zip]</button>
-      <p id="zipStatus" class="dim">Все файлы + иконки (13 штук).</p>
+      <button type="button" id="btnDownloadZip2" class="btn btn-big" data-i18n="filesZip">[скачать всё — .zip]</button>
+      <p id="zipStatus" class="dim" data-i18n="filesZipStatus">Все файлы + иконки (13 штук). Вес показывается после сборки архива.</p>
 
       <table class="files">
-        <thead><tr><th>файл</th><th>назначение</th><th></th></tr></thead>
+        <thead><tr><th data-i18n="thFile">файл</th><th data-i18n="thPurpose">назначение</th><th></th></tr></thead>
         <tbody>
-          <tr><td><code>manifest.json</code></td><td>Манифест расширения (MV3)</td><td><button class="file-dl" data-file="manifest.json">[скачать]</button></td></tr>
-          <tr><td><code>content.js</code></td><td>Панель на x.com + сбор данных + TAS</td><td><button class="file-dl" data-file="content.js">[скачать]</button></td></tr>
-          <tr><td><code>background.js</code></td><td>Service worker: Telegram API, управление вкладками</td><td><button class="file-dl" data-file="background.js">[скачать]</button></td></tr>
-          <tr><td><code>main-world.js</code></td><td>Хук буфера обмена (Grok → TAS)</td><td><button class="file-dl" data-file="main-world.js">[скачать]</button></td></tr>
-          <tr><td><code>report-builder.js</code></td><td>Генератор HTML-отчёта</td><td><button class="file-dl" data-file="report-builder.js">[скачать]</button></td></tr>
-          <tr><td><code>popup.html</code></td><td>Всплывающее окно расширения (тулбар)</td><td><button class="file-dl" data-file="popup.html">[скачать]</button></td></tr>
-          <tr><td><code>popup.js</code></td><td>Логика статуса в popup</td><td><button class="file-dl" data-file="popup.js">[скачать]</button></td></tr>
-          <tr><td><code>README.md</code></td><td>Описание проекта</td><td><button class="file-dl" data-file="README.md">[скачать]</button></td></tr>
-          <tr><td><code>INSTRUCTIONS.md</code></td><td>Полная инструкция</td><td><button class="file-dl" data-file="INSTRUCTIONS.md">[скачать]</button></td></tr>
-          <tr><td><code>icons/</code></td><td>Иконки расширения (16/32/48/128)</td><td><button class="file-dl" data-file="icons/icon128.png">[скачать]</button></td></tr>
+          <tr><td><code>manifest.json</code></td><td data-i18n="fd1">Манифест расширения (MV3)</td><td><button type="button" class="file-dl" data-file="manifest.json" data-i18n-aria="ariaDl" data-i18n-args='{"f":"manifest.json"}' aria-label="Скачать manifest.json">[dl]</button></td></tr>
+          <tr><td><code>content.js</code></td><td data-i18n="fd2">Панель на x.com + сбор данных + TAS</td><td><button type="button" class="file-dl" data-file="content.js" data-i18n-aria="ariaDl" data-i18n-args='{"f":"content.js"}' aria-label="Скачать content.js">[dl]</button></td></tr>
+          <tr><td><code>background.js</code></td><td data-i18n="fd3">Service worker: Telegram API, управление вкладками</td><td><button type="button" class="file-dl" data-file="background.js" data-i18n-aria="ariaDl" data-i18n-args='{"f":"background.js"}' aria-label="Скачать background.js">[dl]</button></td></tr>
+          <tr><td><code>main-world.js</code></td><td data-i18n="fd4">Хук буфера обмена (Grok → TAS)</td><td><button type="button" class="file-dl" data-file="main-world.js" data-i18n-aria="ariaDl" data-i18n-args='{"f":"main-world.js"}' aria-label="Скачать main-world.js">[dl]</button></td></tr>
+          <tr><td><code>report-builder.js</code></td><td data-i18n="fd5">Генератор HTML-отчёта</td><td><button type="button" class="file-dl" data-file="report-builder.js" data-i18n-aria="ariaDl" data-i18n-args='{"f":"report-builder.js"}' aria-label="Скачать report-builder.js">[dl]</button></td></tr>
+          <tr><td><code>popup.html</code></td><td data-i18n="fd6">Всплывающее окно расширения (тулбар)</td><td><button type="button" class="file-dl" data-file="popup.html" data-i18n-aria="ariaDl" data-i18n-args='{"f":"popup.html"}' aria-label="Скачать popup.html">[dl]</button></td></tr>
+          <tr><td><code>popup.js</code></td><td data-i18n="fd7">Логика статуса в popup</td><td><button type="button" class="file-dl" data-file="popup.js" data-i18n-aria="ariaDl" data-i18n-args='{"f":"popup.js"}' aria-label="Скачать popup.js">[dl]</button></td></tr>
+          <tr><td><code>README.md</code></td><td data-i18n="fd8">Описание проекта</td><td><button type="button" class="file-dl" data-file="README.md" data-i18n-aria="ariaDl" data-i18n-args='{"f":"README.md"}' aria-label="Скачать README.md">[dl]</button></td></tr>
+          <tr><td><code>INSTRUCTIONS.md</code></td><td data-i18n="fd9">Полная инструкция</td><td><button type="button" class="file-dl" data-file="INSTRUCTIONS.md" data-i18n-aria="ariaDl" data-i18n-args='{"f":"INSTRUCTIONS.md"}' aria-label="Скачать INSTRUCTIONS.md">[dl]</button></td></tr>
+          <tr><td><code>icons/</code></td><td data-i18n="fd10">Иконки расширения (16/32/48/128)</td><td><button type="button" class="file-dl" data-file="icons/icon128.png" data-i18n-aria="ariaDl" data-i18n-args='{"f":"icon128.png"}' aria-label="Скачать иконку icon128.png">[dl]</button></td></tr>
         </tbody>
       </table>
     </section>
 
     <!-- ===== FAQ ===== -->
     <section id="faq">
-      <h2>== ЧАСТЫЕ ВОПРОСЫ ==</h2>
+      <h2 data-i18n="faqTitle">== ЧАСТЫЕ ВОПРОСЫ ==</h2>
       <dl>
         <dt>«Telegram is unreachable: Unauthorized»</dt>
-        <dd>Неверный токен бота. Создайте нового бота через @BotFather и вставьте токен заново.</dd>
+        <dd data-i18n="faq1">Неверный токен бота. Создайте нового бота через @BotFather и вставьте токен заново.</dd>
 
         <dt>«Forbidden: bot was blocked by the user»</dt>
-        <dd>Вы ни разу не писали боту. Откройте чат с ботом и нажмите <b>Start</b>.</dd>
+        <dd data-i18n-html="faq2">Вы ни разу не писали боту. Откройте чат с ботом и нажмите <b>Start</b>.</dd>
 
         <dt>«chat not found»</dt>
-        <dd>Неверный Telegram ID. Проверьте через @userinfobot.</dd>
+        <dd data-i18n="faq3">Неверный Telegram ID. Проверьте через @userinfobot.</dd>
 
         <dt>«Could not load the following/followers list»</dt>
-        <dd>Не вошли в X, профиль приватный/заблокирован, или X недоступен. Войдите и выберите публичный профиль.</dd>
+        <dd data-i18n="faq4">Не вошли в X, профиль приватный/заблокирован, или X недоступен. Войдите и выберите публичный профиль.</dd>
 
         <dt>«X rate limit»</dt>
-        <dd>X ограничил запросы. Подождите 10–20 минут и запустите снова.</dd>
+        <dd data-i18n="faq5">X ограничил запросы. Подождите 10–20 минут и запустите снова.</dd>
 
         <dt>TAS: «could not send post … to the channel»</dt>
-        <dd>Неверный ID канала или бот не является администратором. Добавьте бота админом.</dd>
+        <dd data-i18n="faq6">Неверный ID канала или бот не является администратором. Добавьте бота админом.</dd>
 
         <dt>TAS: «could not find the Grok input»</dt>
-        <dd>Не вошли в X или Grok недоступен. Откройте x.com/i/grok вручную.</dd>
+        <dd data-i18n="faq7">Не вошли в X или Grok недоступен. Откройте x.com/i/grok вручную.</dd>
 
         <dt>TAS: «the Grok answer does not contain {...} blocks»</dt>
-        <dd>Grok проигнорировал формат. Проверьте ответ в Grok; промт — константа <code>TAS_PROMPT</code> в content.js.</dd>
+        <dd data-i18n-html="faq8">Grok проигнорировал формат. Проверьте ответ в Grok; промт — константа <code>TAS_PROMPT</code> в content.js.</dd>
 
         <dt>Браузер блокирует всплывающее окно</dt>
-        <dd>Разрешите всплывающие окна для x.com в настройках браузера и нажмите Start.</dd>
+        <dd data-i18n="faq9">Разрешите всплывающие окна для x.com в настройках браузера и нажмите Start.</dd>
 
         <dt>Панель не появляется</dt>
-        <dd>Обновите страницу x.com. Если не помогло — перезагрузите расширение (<code>chrome://extensions</code> → ↻).</dd>
+        <dd data-i18n-html="faq10">Обновите страницу x.com. Если не помогло — перезагрузите расширение (<code>chrome://extensions</code> → ↻).</dd>
       </dl>
-      <p class="dim">Полная таблица неполадок: <a href="https://raw.githubusercontent.com/Tool-xx/scrxper/main/INSTRUCTIONS.md" target="_blank">INSTRUCTIONS.md</a></p>
+      <p class="dim" data-i18n-html="faqMore">Полная таблица неполадок: <a href="https://raw.githubusercontent.com/Tool-xx/scrxper/main/INSTRUCTIONS.md" target="_blank" rel="noopener">INSTRUCTIONS.md</a></p>
     </section>
 
   </main>
 
   <pre class="footer">
-SCRXPER v1.9.2 · github.com/Tool-xx/scrxper
-<a href="https://raw.githubusercontent.com/Tool-xx/scrxper/main/README.md" target="_blank">README</a> &middot; <a href="https://raw.githubusercontent.com/Tool-xx/scrxper/main/INSTRUCTIONS.md" target="_blank">INSTRUCTIONS</a>
+SCRXPER v1.9.4 · github.com/Tool-xx/scrxper
+<a href="https://raw.githubusercontent.com/Tool-xx/scrxper/main/README.md" target="_blank" rel="noopener">README</a> &middot; <a href="https://raw.githubusercontent.com/Tool-xx/scrxper/main/INSTRUCTIONS.md" target="_blank" rel="noopener">INSTRUCTIONS</a>
 
-ИСПОЛЬЗУЙТЕ ТОЛЬКО НА СВОИХ АККАУНТАХ. АВТОМАТИЧЕСКИЙ СБОР МОЖЕТ НАРУШАТЬ УСЛОВИЯ X.
+<span data-i18n="disclaimer">ИСПОЛЬЗУЙТЕ ТОЛЬКО НА СВОИХ АККАУНТАХ. АВТОМАТИЧЕСКИЙ СБОР МОЖЕТ НАРУШАТЬ УСЛОВИЯ X.</span>
   </pre>
 
-  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
-  <script src="app.js"></script>
+  <script src="i18n.js?v=20260810"></script>
+  <script>SX_applyLang();</script>
+  <script src="app.js?v=20260810"></script>
 </body>
 </html>

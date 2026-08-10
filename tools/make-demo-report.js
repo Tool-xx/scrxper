@@ -37,7 +37,7 @@ const html = buildHtmlReport({
   following,
   followers,
   results,
-  version: '1.9.2'
+  version: '1.9.4'
 });
 
 const out = path.join(__dirname, 'sample-report.html');

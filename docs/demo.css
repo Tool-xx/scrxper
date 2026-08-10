@@ -1,0 +1,262 @@
+/* ============ ScrXper demo — old-school style (как сайт) ============ */
+:root{
+  --bg:#0c0c0c; --panel:#111; --panel2:#161616;
+  --line:#333; --line2:#3a3a3a;
+  --txt:#c8c8c8; --dim:#888; --faint:#555;
+  --teal:#5f9ea0; --teal-br:#7fffd4; --green:#90ee90;
+  --red:#e74c3c; --amber:#f0b90b; --yellow:#febc2e;
+}
+*{box-sizing:border-box; margin:0; padding:0}
+html,body{height:100%}
+body{
+  background:var(--bg); color:var(--txt);
+  font-family:"Courier New", Courier, "Lucida Console", monospace;
+  display:flex; flex-direction:column; align-items:center;
+  padding:14px 12px 24px; overflow-x:hidden;
+}
+::selection{background:var(--teal); color:#000}
+
+a{color:var(--teal); text-decoration:underline}
+a:hover{color:var(--teal-br)}
+
+/* ---------- шапка (только в режиме плеера) ---------- */
+.topline{width:100%; max-width:1080px; display:flex; align-items:center; justify-content:space-between; gap:12px; padding:2px 2px 12px; flex-wrap:wrap}
+.topline .brand{font-weight:700; letter-spacing:2px; color:#e0e0e0}
+.topline .brand b{color:var(--teal)}
+.topline .links{display:flex; gap:8px; flex-wrap:wrap}
+.topline a{border:1px solid var(--line); padding:4px 10px; text-decoration:none; font-size:12px; background:var(--panel)}
+.topline a:hover{border-color:var(--teal); color:var(--teal-br)}
+
+/* ---------- плеер ---------- */
+.player{width:100%; max-width:1080px; background:var(--panel); border:1px solid var(--line); overflow:hidden}
+.stage{
+  position:relative; height:clamp(420px, 62vh, 600px); overflow:hidden;
+  background:
+    linear-gradient(rgba(95,158,160,.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(95,158,160,.04) 1px, transparent 1px),
+    var(--bg);
+  background-size:40px 40px, 40px 40px, auto;
+}
+body.mode-loop .stage{height:100vh}
+.stage.paused *, .stage.paused *::before, .stage.paused *::after{animation-play-state:paused!important}
+
+.note{position:absolute; left:50%; bottom:12px; transform:translateX(-50%); background:rgba(10,10,10,.92); border:1px solid var(--line); padding:8px 14px; font-size:13px; color:var(--dim); text-align:center; max-width:94%; line-height:1.5; opacity:0; transition:opacity .35s; z-index:20}
+.note.show{opacity:1}
+.note b{color:var(--teal-br)}
+.note .k{color:#fff; background:var(--panel2); border:1px solid #444; padding:0 6px; font-size:12px}
+
+.fadein{opacity:0; animation:fadein .55s forwards}
+@keyframes fadein{to{opacity:1}}
+
+/* ---------- окна ---------- */
+.win{background:var(--panel); border:1px solid var(--line); overflow:hidden; display:flex; flex-direction:column; transform:translateY(14px) scale(.97); opacity:0; transition:.5s cubic-bezier(.2,.9,.25,1.2)}
+.win.pop{transform:none; opacity:1}
+.winbar{display:flex; align-items:center; gap:8px; padding:7px 10px; background:var(--panel2); border-bottom:1px solid var(--line)}
+.winbar .dot{width:10px; height:10px}
+.winbar .dot.r{background:var(--red)} .winbar .dot.y{background:var(--yellow)} .winbar .dot.g{background:#2ecc71}
+.winbar .addr{flex:1; margin-left:8px; background:var(--bg); border:1px solid var(--line); padding:4px 10px; font-size:11.5px; color:var(--dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; transition:.3s}
+.winbar .addr.hl{border-color:var(--teal); color:var(--teal-br)}
+.winbar .wt{font-size:11px; color:var(--faint); margin-left:auto}
+
+.hlring{outline:1px solid var(--teal); outline-offset:2px; animation:ringpulse 1.6s infinite}
+@keyframes ringpulse{0%,100%{outline-color:var(--teal)}50%{outline-color:rgba(95,158,160,.3)}}
+
+.pulse{animation:pulse 1s infinite}
+@keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.06)}}
+
+.chip{display:inline-block; font-size:11.5px; background:var(--bg); border:1px solid var(--line); padding:3px 9px; color:var(--teal-br); opacity:0; transform:translateY(6px); transition:.35s}
+.chip.show{opacity:1; transform:none}
+
+/* ---------- сцена 1 ---------- */
+.biglogo{text-align:center; width:100%}
+.biglogo .ll{font-weight:800; font-size:clamp(36px,6.5vw,80px); letter-spacing:6px; color:var(--teal); display:inline-block; opacity:0; transform:translateY(24px) scale(.85); animation:logoin .6s cubic-bezier(.2,.9,.2,1.2) forwards}
+@keyframes logoin{to{opacity:1; transform:none}}
+.sub{margin-top:12px; color:var(--teal-br); font-size:clamp(12px,2.2vw,15px); letter-spacing:2px; text-transform:uppercase; opacity:0; transition:opacity .6s}
+.sub.show{opacity:1}
+.feats{margin-top:24px; display:flex; flex-direction:column; gap:9px; align-items:center}
+.featline{opacity:0; transform:translateX(-14px); transition:.45s; font-size:clamp(13px,2.2vw,15px); color:var(--txt)}
+.featline.show{opacity:1; transform:none}
+.featline b{color:var(--green)}
+
+/* ---------- сцена 2 ---------- */
+.ext-body{padding:16px 18px 18px; display:flex; flex-direction:column; gap:13px; width:min(600px,88vw)}
+.ext-body h3{font-size:14px; color:#fff; font-weight:700}
+.switchrow{display:flex; align-items:center; gap:12px; font-size:13px; color:var(--dim)}
+.switch{position:relative; width:42px; height:22px; background:#1a1a1a; border:1px solid var(--line2); transition:.3s; flex:none}
+.switch::after{content:""; position:absolute; top:3px; left:3px; width:14px; height:14px; background:#777; transition:.3s}
+.switch.on{border-color:var(--teal); background:#13201f}
+.switch.on::after{left:23px; background:var(--teal-br)}
+.loadbtn{align-self:flex-start; background:var(--panel2); border:1px solid var(--line2); color:#fff; padding:8px 14px; font-size:13px; font-family:inherit; cursor:pointer; transition:.2s}
+.loadbtn:hover{border-color:var(--teal)}
+.ext-card{display:flex; align-items:center; gap:12px; background:var(--panel2); border:1px solid var(--line); padding:11px 13px; opacity:0; transform:translateY(10px); transition:.45s}
+.ext-card.show{opacity:1; transform:none}
+.ext-card .ic{width:32px; height:32px; display:flex; align-items:center; justify-content:center; font-size:17px; background:var(--teal); color:#0c0c0c; flex:none}
+.ext-card .nm{font-size:13.5px; color:#fff; font-weight:700}
+.ext-card .vs{font-size:11px; color:var(--faint)}
+.ext-card .ok{margin-left:auto; color:var(--green); font-size:12px}
+
+/* ---------- сцена 3 ---------- */
+.tgrow{display:flex; gap:16px; width:min(860px,94vw); align-items:stretch; flex-wrap:wrap; justify-content:center}
+.chat{flex:1; min-width:280px; max-width:420px; height:330px; display:flex; flex-direction:column; background:var(--panel); border:1px solid var(--line); overflow:hidden; transform:translateY(14px) scale(.97); opacity:0; transition:.5s cubic-bezier(.2,.9,.25,1.2)}
+.chat.pop{transform:none; opacity:1}
+.chathead{display:flex; align-items:center; gap:9px; padding:8px 11px; background:var(--panel2); border-bottom:1px solid var(--line)}
+.chathead .av{width:26px; height:26px; display:flex; align-items:center; justify-content:center; font-size:13px; flex:none}
+.chathead .cn{font-size:13px; color:#fff; font-weight:700}
+.chathead .cs{font-size:10.5px; color:var(--faint)}
+.msgs{flex:1; padding:11px; display:flex; flex-direction:column; gap:8px; overflow:hidden}
+.msg{max-width:86%; padding:8px 11px; font-size:12.5px; line-height:1.45; border:1px solid var(--line); opacity:0; transform:translateY(8px); transition:.4s}
+.msg.show{opacity:1; transform:none}
+.msg.them{background:#191919; align-self:flex-start}
+.msg.me{background:#10201f; border-color:#2f6f6f; align-self:flex-end}
+.msg .tok{color:var(--teal-br); word-break:break-all}
+.msg .em{font-size:16px}
+.composer{display:flex; align-items:center; gap:8px; padding:8px 11px; background:var(--panel2); border-top:1px solid var(--line)}
+.composer .cfield{flex:1; background:var(--bg); border:1px solid var(--line); padding:7px 11px; font-size:12.5px; color:#fff; white-space:pre; overflow:hidden}
+.composer .cbtn{width:30px; height:30px; background:var(--panel2); border:1px solid var(--line2); color:var(--teal); display:flex; align-items:center; justify-content:center; font-size:13px; opacity:.4; transition:.25s; flex:none}
+.composer .cbtn.on{opacity:1; border-color:var(--teal); color:var(--teal-br)}
+.caret{animation:blink 1s steps(1) infinite; color:var(--teal-br)}
+@keyframes blink{50%{opacity:0}}
+
+/* ---------- сцена 4 ---------- */
+.parrow{display:flex; gap:12px; width:min(960px,96vw); align-items:stretch; flex-wrap:wrap; justify-content:center}
+.xwin{flex:1.65; min-width:380px; display:flex; background:var(--panel); border:1px solid var(--line); overflow:hidden; transform:translateY(14px) scale(.97); opacity:0; transition:.5s cubic-bezier(.2,.9,.25,1.2); position:relative}
+.xwin.pop{transform:none; opacity:1}
+.sidebar{width:52px; background:#0e0e0e; border-right:1px solid var(--line); display:flex; flex-direction:column; align-items:center; gap:15px; padding-top:15px; font-size:15px; flex:none}
+.sidebar .xb{width:32px; height:32px; display:flex; align-items:center; justify-content:center; color:var(--faint)}
+.sidebar .xb.on{color:var(--teal-br)}
+.xmain{flex:1; padding:13px 14px; display:flex; flex-direction:column; gap:10px; min-width:0}
+.prof{display:flex; gap:12px; align-items:center}
+.avatar{width:46px; height:46px; background:#1c1c1c; border:1px solid var(--line2); display:flex; align-items:center; justify-content:center; font-size:20px; flex:none}
+.pname{font-size:13.5px; color:#fff; font-weight:700; display:flex; align-items:center; gap:5px}
+.pname .vb{color:var(--teal-br); font-size:12px}
+.phandle{font-size:11.5px; color:var(--dim)}
+.follow{font-size:11px; border:1px solid var(--teal); color:var(--teal); padding:3px 10px; margin-left:auto; flex:none}
+.ptabs{display:flex; gap:14px; border-bottom:1px solid var(--line); padding-bottom:8px; font-size:12px; color:var(--dim)}
+.ptabs .pt.on{color:#fff; border-bottom:2px solid var(--teal)}
+.feed{display:flex; flex-direction:column; gap:8px}
+.post{background:#0e0e0e; border:1px solid var(--line); padding:8px 10px; font-size:11px; color:var(--dim); opacity:0; transform:translateY(8px); transition:.4s; line-height:1.4}
+.post.show{opacity:1; transform:none}
+
+.tgchat{flex:1; min-width:250px; max-width:340px; display:flex; flex-direction:column; background:var(--panel); border:1px solid var(--line); overflow:hidden; opacity:0; transform:translateY(14px) scale(.96); transition:.5s}
+.tgchat.pop{opacity:1; transform:none}
+
+.panel{position:absolute; right:10px; top:10px; width:240px; background:rgba(13,13,13,.97); border:1px solid var(--teal); padding:11px 11px 10px; z-index:5; transform:translateX(280px); transition:.6s cubic-bezier(.2,.9,.25,1.15)}
+.panel.in{transform:none}
+.panel .pt{display:flex; align-items:center; gap:8px}
+.panel .pt .plogo{width:22px; height:22px; background:var(--teal); color:#0c0c0c; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:800; flex:none}
+.panel .pt1{font-size:12px; color:#fff; font-weight:700; letter-spacing:.5px}
+.panel .pt2{font-size:9px; color:var(--faint)}
+.panel .tabs{display:flex; gap:6px; margin:8px 0}
+.panel .ptab{font-size:10.5px; padding:3px 8px; background:var(--panel2); color:var(--dim); border:1px solid var(--line)}
+.panel .ptab.on{background:#13201f; color:var(--teal-br); border-color:var(--teal)}
+.pfield{margin-bottom:7px}
+.pfield .pl{font-size:9.5px; color:var(--dim); margin-bottom:3px; letter-spacing:.3px}
+.pinput{display:block; background:var(--bg); border:1px solid var(--line); padding:5px 8px; font-size:11px; color:#fff; white-space:nowrap; overflow:hidden; height:26px; transition:.25s; font-family:inherit}
+.pinput.hl{border-color:var(--teal); color:var(--teal-br)}
+.pinput .dots{letter-spacing:2px}
+.chkrow{display:flex; align-items:center; gap:7px; font-size:10px; color:var(--dim); margin:8px 0 9px}
+.box{width:13px; height:13px; border:1px solid var(--line2); background:var(--bg); display:flex; align-items:center; justify-content:center; font-size:9px; color:transparent; transition:.2s; flex:none}
+.box.on{background:#13201f; border-color:var(--teal); color:var(--teal-br)}
+.pbtn{width:100%; padding:8px; border:1px solid var(--teal); background:none; font-size:12px; font-weight:700; color:var(--teal); cursor:pointer; transition:.25s; font-family:inherit}
+.pbtn:hover{background:var(--teal); color:#0c0c0c}
+.pbtn.busy{border-color:var(--line2); color:var(--dim)}
+.prog{display:none; margin-top:9px}
+.prog.show{display:block}
+.pline{display:flex; justify-content:space-between; font-size:9.5px; color:var(--dim); margin-bottom:5px; gap:8px; flex-wrap:wrap}
+.bar{height:6px; border:1px solid var(--line); background:var(--bg); margin:6px 0; padding:0}
+.barfill{height:100%; width:0%; background:var(--teal); transition:width .5s}
+
+/* ---------- сцена 5 ---------- */
+.filters{width:min(560px,92vw); background:var(--panel); border:1px solid var(--line); padding:18px 20px}
+.frow{border:1px solid transparent; padding:12px 13px; transition:.3s; opacity:.4}
+.frow.on{opacity:1; border-color:var(--line2); background:#0e0e0e}
+.frow .ft{font-size:12.5px; color:#fff; margin-bottom:7px; display:flex; align-items:center; gap:7px; flex-wrap:wrap}
+.frow .ft .ex{color:var(--faint); font-size:10.5px}
+.fexamp{display:flex; gap:8px; flex-wrap:wrap; margin-top:9px}
+
+/* ---------- сцена 6 ---------- */
+.tas-stage{position:absolute; inset:0; display:flex; align-items:center; justify-content:center}
+.tas-panel{width:min(560px,88vw); background:var(--panel); border:1px solid var(--line); padding:15px 17px; opacity:0; transform:translateY(16px); transition:.5s}
+.tas-panel.pop{opacity:1; transform:none}
+.tas-panel .tp-title{font-size:13px; color:#fff; font-weight:700; margin-bottom:2px}
+.tas-panel .tp-sub{font-size:10.5px; color:var(--dim); margin-bottom:11px; line-height:1.5}
+.grok-win{position:absolute; right:3%; top:50%; transform:translate(46px,-50%); width:min(430px,46vw); min-width:280px; background:#0e0e0e; border:1px solid var(--line); overflow:hidden; opacity:0; transition:.5s}
+.grok-win.pop{opacity:1; transform:translate(0,-50%)}
+.grok-head{display:flex; align-items:center; gap:8px; padding:9px 13px; border-bottom:1px solid var(--line); font-size:13px; color:#fff; font-weight:700}
+.grok-head .gdot{width:9px; height:9px; background:var(--teal); flex:none}
+.grok-inp{margin:11px 11px 0; background:var(--bg); border:1px solid var(--line); padding:10px 11px; font-size:10.5px; color:var(--dim); line-height:1.55; min-height:60px; transition:.3s}
+.grok-inp.hl{border-color:var(--teal); color:#bbb}
+.grok-send{margin:10px 11px 11px auto; width:32px; height:32px; background:none; border:1px solid var(--teal); color:var(--teal); display:flex; align-items:center; justify-content:center; font-size:13px; opacity:.4; transition:.25s}
+.grok-send.on{opacity:1; color:var(--teal-br); border-color:var(--teal-br)}
+.thinking{display:none; align-items:center; gap:9px; padding:2px 13px 13px; font-size:11.5px; color:var(--dim)}
+.thinking.show{display:flex}
+.spinner{width:14px; height:14px; border:2px solid var(--line2); border-top-color:var(--teal); animation:spin .8s linear infinite; flex:none}
+@keyframes spin{to{transform:rotate(360deg)}}
+.answer{display:none; margin:0 11px 11px; background:var(--bg); border:1px solid var(--teal); padding:10px 11px; font-size:10.5px; color:var(--txt); line-height:1.55}
+.answer.show{display:block; animation:ansin .4s}
+@keyframes ansin{from{opacity:0; transform:translateY(8px)} to{opacity:1; transform:none}}
+.answer .blk{color:var(--teal-br)}
+.copybtn{margin:0 11px 11px auto; display:none; font-size:10px; color:#fff; background:var(--panel2); border:1px solid var(--line2); padding:5px 10px; font-family:inherit}
+.copybtn.show{display:block; animation:copyfl 1.1s infinite}
+@keyframes copyfl{0%,100%{border-color:var(--line2)}50%{border-color:var(--teal)}}
+
+/* ---------- сцена 7 ---------- */
+.upd-scene{flex-direction:column; gap:20px}
+.banner{display:flex; align-items:center; gap:14px; background:#0e1313; border:1px solid var(--teal); padding:12px 16px; width:min(560px,92vw); opacity:0; transform:translateY(14px); transition:.5s}
+.banner.show{opacity:1; transform:none}
+.banner .bic{font-size:20px}
+.banner .bt1{font-size:13.5px; color:#fff; font-weight:700}
+.banner .bt2{font-size:11.5px; color:var(--dim); margin-top:2px}
+.banner .bdl{margin-left:auto; border:1px solid var(--teal); color:var(--teal); padding:7px 12px; font-size:12px; font-weight:700; flex:none}
+.finalcard{width:min(560px,92vw); background:var(--panel); border:1px solid var(--line); padding:20px; text-align:center; opacity:0; transform:translateY(14px); transition:.5s}
+.finalcard.show{opacity:1; transform:none}
+.finalcard .fh{font-size:19px; color:#fff; margin-bottom:6px}
+.finalcard .fl{font-size:13px; color:var(--dim); margin-bottom:15px; line-height:1.55}
+.finalcard .fr{display:flex; gap:10px; justify-content:center; flex-wrap:wrap}
+.finalcard .fr a{border:1px solid var(--line); padding:7px 12px; text-decoration:none; font-size:12.5px}
+.finalcard .fr a:hover{border-color:var(--teal); color:var(--teal-br)}
+.confetti{position:absolute; top:-16px; width:8px; height:14px; opacity:0; animation:conf 1.8s ease-in forwards; z-index:15}
+@keyframes conf{
+  0%{transform:translateY(-10px) rotate(0); opacity:1}
+  100%{transform:translateY(580px) rotate(720deg); opacity:0}
+}
+
+/* ---------- контролы плеера ---------- */
+.controls{display:flex; align-items:center; gap:12px; padding:9px 13px; background:#0e0e0e; border-top:1px solid var(--line); flex-wrap:wrap}
+body.mode-loop .controls{display:none}
+body.mode-loop .topline{display:none}
+.cbtn2{width:38px; height:38px; border:1px solid var(--line2); background:var(--panel2); color:var(--txt); font-size:15px; cursor:pointer; transition:.18s; display:flex; align-items:center; justify-content:center; flex:none; font-family:inherit}
+.cbtn2:hover{border-color:var(--teal); color:var(--teal-br)}
+.cbtn2.play{width:44px; height:44px; font-size:16px; border-color:var(--teal); color:var(--teal)}
+.cbtn2.play:hover{background:var(--teal); color:#0c0c0c}
+.barwrap{flex:1; min-width:170px; height:26px; position:relative; display:flex; align-items:center; cursor:pointer}
+.track{width:100%; height:6px; background:var(--bg); border:1px solid var(--line); overflow:hidden}
+.fill{height:100%; width:0%; background:var(--teal); transition:width .1s linear}
+.marks{position:absolute; inset:0}
+.mark{position:absolute; top:50%; transform:translate(-50%,-50%); width:10px; height:10px; background:var(--bg); border:1px solid var(--line2); cursor:pointer; transition:.2s}
+.mark:hover{border-color:var(--teal)}
+.mark.done{background:#2f6f6f; border-color:var(--teal)}
+.mark.cur{background:var(--teal-br); border-color:#fff}
+.time{font-size:12px; color:var(--dim); flex:none}
+.scenetitle{font-size:12px; color:var(--txt); flex:none; max-width:190px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.scenetitle b{color:var(--teal)}
+
+@media (max-width:700px){
+  .stage{height:clamp(380px,60vh,520px)}
+  .panel{width:200px}
+  .sidebar{width:44px}
+  .scenetitle{display:none}
+  .grok-win{width:min(430px,52vw)}
+  .xwin{min-width:300px}
+  .chat{min-width:250px}
+  .tgchat{min-width:220px; max-width:250px}
+  .parrow{transform:scale(.9); transform-origin:center}
+  .tgrow{transform:scale(.92); transform-origin:center}
+  .tas-stage{transform:scale(.92); transform-origin:center}
+  .grok-win{transform:translate(0,-50%) scale(.88)}
+}
+
+/* ---------- доступность: меньше движения ---------- */
+@media (prefers-reduced-motion: reduce){
+  *, *::before, *::after{animation:none!important; transition:none!important}
+}
